@@ -202,8 +202,14 @@ func (g *GitWorktree) ResumeSubmodules() error {
 	_, _ = g.runGitCommand(g.worktreePath, "submodule", "deinit", "--all", "-f")
 
 	for path, sw := range g.submodules {
+		// Preserve the original baseCommitSHA across resume — Setup() would
+		// overwrite it with the branch's current HEAD (which includes pause commits).
+		savedSHA := sw.GetBaseCommitSHA()
 		if err := sw.Setup(); err != nil {
 			return fmt.Errorf("failed to resume submodule %s: %w", path, err)
+		}
+		if savedSHA != "" {
+			sw.SetBaseCommitSHA(savedSHA)
 		}
 	}
 	return nil

@@ -776,33 +776,6 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			m.state = stateDefault
 		})
 		return m, nil
-	case keys.KeyAddSubmodule:
-		selected := m.list.GetSelectedInstance()
-		if selected == nil || !selected.Started() || selected.Paused() {
-			return m, nil
-		}
-		gw, err := selected.GetGitWorktree()
-		if err != nil {
-			return m, nil
-		}
-		if !gw.IsSubmoduleAware() {
-			return m, m.handleError(fmt.Errorf("session is not submodule-aware"))
-		}
-		// TODO: implement runtime submodule addition overlay
-		// For now, show available submodules count
-		cwd, _ := os.Getwd()
-		allSubs, _ := git.ListSubmodules(cwd)
-		existing := gw.GetSubmodules()
-		available := 0
-		for _, s := range allSubs {
-			if _, exists := existing[s.Path]; !exists {
-				available++
-			}
-		}
-		if available == 0 {
-			return m, m.handleError(fmt.Errorf("all submodules already initialized"))
-		}
-		return m, m.handleError(fmt.Errorf("runtime submodule addition not yet implemented — select submodules during session creation"))
 	default:
 		return m, nil
 	}
@@ -921,7 +894,10 @@ func (m *home) handleError(err error) tea.Cmd {
 func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
 	profiles := m.appConfig.GetProfiles()
 	cwd, _ := os.Getwd()
-	submodules, _ := git.ListSubmodules(cwd)
+	submodules, err := git.ListSubmodules(cwd)
+	if err != nil {
+		log.ErrorLog.Printf("failed to list submodules: %v", err)
+	}
 	var subPaths []string
 	for _, s := range submodules {
 		subPaths = append(subPaths, s.Path)

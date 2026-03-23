@@ -154,8 +154,9 @@ func (s *SubmoduleWorktree) GetSubmodulePath() string { return s.submodulePath }
 func (s *SubmoduleWorktree) GetGitDir() string        { return s.gitDir }
 func (s *SubmoduleWorktree) GetWorktreePath() string  { return s.worktreePath }
 func (s *SubmoduleWorktree) GetBranchName() string    { return s.branchName }
-func (s *SubmoduleWorktree) GetBaseCommitSHA() string { return s.baseCommitSHA }
-func (s *SubmoduleWorktree) IsExistingBranch() bool   { return s.isExistingBranch }
+func (s *SubmoduleWorktree) GetBaseCommitSHA() string  { return s.baseCommitSHA }
+func (s *SubmoduleWorktree) SetBaseCommitSHA(sha string) { s.baseCommitSHA = sha }
+func (s *SubmoduleWorktree) IsExistingBranch() bool    { return s.isExistingBranch }
 
 func (s *SubmoduleWorktree) runGitDirCommand(args ...string) (string, error) {
 	baseArgs := []string{"--git-dir=" + s.gitDir}
