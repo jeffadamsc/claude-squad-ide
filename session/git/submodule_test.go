@@ -45,6 +45,43 @@ func TestSubmoduleWorktreeSetupAndCleanup(t *testing.T) {
 	}
 }
 
+func TestGitWorktreeWithSubmodules(t *testing.T) {
+	parentDir, _ := setupTestRepoWithSubmodules(t)
+
+	gw, _, err := NewGitWorktree(parentDir, "test-session")
+	if err != nil {
+		t.Fatalf("NewGitWorktree: %v", err)
+	}
+
+	if gw.IsSubmoduleAware() {
+		t.Error("expected non-submodule-aware worktree by default")
+	}
+
+	// Must call Setup before InitSubmodules since it creates the worktree
+	if err := gw.Setup(); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	subs, _ := ListSubmodules(parentDir)
+	subPaths := []string{subs[0].Path}
+	if err := gw.InitSubmodules(parentDir, subPaths); err != nil {
+		t.Fatalf("InitSubmodules: %v", err)
+	}
+
+	if !gw.IsSubmoduleAware() {
+		t.Error("expected submodule-aware worktree after InitSubmodules")
+	}
+
+	if len(gw.GetSubmodules()) != 1 {
+		t.Errorf("expected 1 submodule, got %d", len(gw.GetSubmodules()))
+	}
+
+	// Test cleanup handles submodules
+	if err := gw.Cleanup(); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+}
+
 func TestSubmoduleWorktreeIsDirtyAndCommit(t *testing.T) {
 	parentDir, _ := setupTestRepoWithSubmodules(t)
 	subs, _ := ListSubmodules(parentDir)

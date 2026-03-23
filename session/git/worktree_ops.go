@@ -100,6 +100,13 @@ func (g *GitWorktree) setupNewWorktree() error {
 func (g *GitWorktree) Cleanup() error {
 	var errs []error
 
+	// Clean up submodule worktrees first
+	for _, sw := range g.submodules {
+		if err := sw.Cleanup(); err != nil {
+			log.ErrorLog.Printf("failed to cleanup submodule %s: %v", sw.GetSubmodulePath(), err)
+		}
+	}
+
 	// Check if worktree path exists before attempting removal
 	if _, err := os.Stat(g.worktreePath); err == nil {
 		// Remove the worktree using git command

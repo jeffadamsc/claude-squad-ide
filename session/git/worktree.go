@@ -32,6 +32,10 @@ type GitWorktree struct {
 	// isExistingBranch is true if the branch existed before the session was created.
 	// When true, the branch will not be deleted on cleanup.
 	isExistingBranch bool
+	// submodules tracks per-submodule worktrees, keyed by relative path.
+	submodules map[string]*SubmoduleWorktree
+	// isSubmoduleAware distinguishes submodule-aware sessions from single-repo sessions.
+	isSubmoduleAware bool
 }
 
 func NewGitWorktreeFromStorage(repoPath string, worktreePath string, sessionName string, branchName string, baseCommitSHA string, isExistingBranch bool) *GitWorktree {
@@ -135,4 +139,63 @@ func (g *GitWorktree) GetRepoName() string {
 // GetBaseCommitSHA returns the base commit SHA for the worktree
 func (g *GitWorktree) GetBaseCommitSHA() string {
 	return g.baseCommitSHA
+}
+
+func (g *GitWorktree) IsSubmoduleAware() bool {
+	return g.isSubmoduleAware
+}
+
+func (g *GitWorktree) GetSubmodules() map[string]*SubmoduleWorktree {
+	return g.submodules
+}
+
+// RestoreSubmodules sets submodule state from storage (used during deserialization).
+func (g *GitWorktree) RestoreSubmodules(subs map[string]*SubmoduleWorktree) {
+	g.submodules = subs
+	g.isSubmoduleAware = true
+}
+
+// InitSubmodules sets up submodule worktrees for the given submodule paths.
+// originalRepoPath is the original (non-worktree) repo path, used to discover submodule git directories.
+func (g *GitWorktree) InitSubmodules(originalRepoPath string, submodulePaths []string) error {
+	if len(submodulePaths) == 0 {
+		return nil
+	}
+
+	allSubs, err := ListSubmodules(originalRepoPath)
+	if err != nil {
+		return fmt.Errorf("failed to list submodules: %w", err)
+	}
+
+	subInfoMap := make(map[string]SubmoduleInfo)
+	for _, s := range allSubs {
+		subInfoMap[s.Path] = s
+	}
+
+	if g.submodules == nil {
+		g.submodules = make(map[string]*SubmoduleWorktree)
+	}
+
+	for _, subPath := range submodulePaths {
+		info, ok := subInfoMap[subPath]
+		if !ok {
+			return fmt.Errorf("submodule %q not found in repo", subPath)
+		}
+
+		targetPath := filepath.Join(g.worktreePath, subPath)
+		sw := NewSubmoduleWorktree(subPath, info.GitDir, targetPath, g.branchName)
+
+		if err := sw.Setup(); err != nil {
+			return fmt.Errorf("failed to setup submodule %s: %w", subPath, err)
+		}
+
+		g.submodules[subPath] = sw
+	}
+
+	g.isSubmoduleAware = true
+	return nil
+}
+
+func (g *GitWorktree) AddSubmodule(originalRepoPath string, submodulePath string) error {
+	return g.InitSubmodules(originalRepoPath, []string{submodulePath})
 }
