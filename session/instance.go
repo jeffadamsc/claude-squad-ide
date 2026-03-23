@@ -4,6 +4,7 @@ import (
 	"claude-squad/log"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
+	"os/exec"
 	"path/filepath"
 
 	"fmt"
@@ -88,10 +89,11 @@ func (i *Instance) ToInstanceData() InstanceData {
 		UpdatedAt: time.Now(),
 		Program:   i.Program,
 		AutoYes:   i.AutoYes,
+		InPlace:   i.inPlace,
 	}
 
-	// Only include worktree data if gitWorktree is initialized
-	if i.gitWorktree != nil {
+	// Only include worktree data if gitWorktree is initialized and not in-place
+	if !i.inPlace && i.gitWorktree != nil {
 		data.Worktree = GitWorktreeData{
 			RepoPath:         i.gitWorktree.GetRepoPath(),
 			WorktreePath:     i.gitWorktree.GetWorktreePath(),
@@ -115,8 +117,8 @@ func (i *Instance) ToInstanceData() InstanceData {
 		}
 	}
 
-	// Only include diff stats if they exist
-	if i.diffStats != nil {
+	// Only include diff stats if they exist and not in-place
+	if !i.inPlace && i.diffStats != nil {
 		data.DiffStats = DiffStatsData{
 			Added:   i.diffStats.Added,
 			Removed: i.diffStats.Removed,
@@ -139,22 +141,26 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 		CreatedAt: data.CreatedAt,
 		UpdatedAt: data.UpdatedAt,
 		Program:   data.Program,
-		gitWorktree: git.NewGitWorktreeFromStorage(
+		inPlace:   data.InPlace,
+	}
+
+	if !data.InPlace {
+		instance.gitWorktree = git.NewGitWorktreeFromStorage(
 			data.Worktree.RepoPath,
 			data.Worktree.WorktreePath,
 			data.Worktree.SessionName,
 			data.Worktree.BranchName,
 			data.Worktree.BaseCommitSHA,
 			data.Worktree.IsExistingBranch,
-		),
-		diffStats: &git.DiffStats{
+		)
+		instance.diffStats = &git.DiffStats{
 			Added:   data.DiffStats.Added,
 			Removed: data.DiffStats.Removed,
 			Content: data.DiffStats.Content,
-		},
+		}
 	}
 
-	if data.Worktree.IsSubmoduleAware && len(data.Worktree.Submodules) > 0 {
+	if !data.InPlace && data.Worktree.IsSubmoduleAware && len(data.Worktree.Submodules) > 0 {
 		subs := make(map[string]*git.SubmoduleWorktree)
 		for _, sd := range data.Worktree.Submodules {
 			subs[sd.SubmodulePath] = git.NewSubmoduleWorktreeFromStorage(
@@ -218,6 +224,9 @@ func (i *Instance) RepoName() (string, error) {
 	if !i.started {
 		return "", fmt.Errorf("cannot get repo name for instance that has not been started")
 	}
+	if i.inPlace {
+		return filepath.Base(i.Path), nil
+	}
 	return i.gitWorktree.GetRepoName(), nil
 }
 
@@ -252,7 +261,13 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	i.tmuxSession = tmuxSession
 
 	if firstTimeSetup {
-		if i.selectedBranch != "" {
+		if i.inPlace {
+			// In-place: no worktree, read current branch for display
+			branchCmd := exec.Command("git", "-C", i.Path, "branch", "--show-current")
+			if out, err := branchCmd.Output(); err == nil {
+				i.Branch = strings.TrimSpace(string(out))
+			}
+		} else if i.selectedBranch != "" {
 			gitWorktree, err := git.NewGitWorktreeFromBranch(i.Path, i.selectedBranch, i.Title)
 			if err != nil {
 				return fmt.Errorf("failed to create git worktree from branch: %w", err)
@@ -285,6 +300,12 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		// Reuse existing session
 		if err := tmuxSession.Restore(); err != nil {
 			setupErr = fmt.Errorf("failed to restore existing session: %w", err)
+			return setupErr
+		}
+	} else if i.inPlace {
+		// In-place: start tmux in the working directory directly
+		if err := i.tmuxSession.Start(i.Path); err != nil {
+			setupErr = fmt.Errorf("failed to start new session: %w", err)
 			return setupErr
 		}
 	} else {
@@ -418,6 +439,9 @@ func (i *Instance) SetPreviewSize(width, height int) error {
 func (i *Instance) GetGitWorktree() (*git.GitWorktree, error) {
 	if !i.started {
 		return nil, fmt.Errorf("cannot get git worktree for instance that has not been started")
+	}
+	if i.inPlace {
+		return nil, fmt.Errorf("in-place sessions do not have a git worktree")
 	}
 	return i.gitWorktree, nil
 }
