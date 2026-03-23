@@ -443,6 +443,17 @@ func (i *Instance) Pause() error {
 
 	var errs []error
 
+	// Pause submodule worktrees first (commit + remove)
+	if i.gitWorktree.IsSubmoduleAware() {
+		if err := i.gitWorktree.PauseSubmodules(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to pause submodules: %w", err))
+		}
+		// Discard submodule pointer changes in parent
+		if err := i.gitWorktree.DiscardSubmodulePointers(); err != nil {
+			errs = append(errs, fmt.Errorf("failed to discard submodule pointers: %w", err))
+		}
+	}
+
 	// Check if there are any changes to commit
 	if dirty, err := i.gitWorktree.IsDirty(); err != nil {
 		errs = append(errs, fmt.Errorf("failed to check if worktree is dirty: %w", err))
@@ -513,6 +524,14 @@ func (i *Instance) Resume() error {
 	if err := i.gitWorktree.Setup(); err != nil {
 		log.ErrorLog.Print(err)
 		return fmt.Errorf("failed to setup git worktree: %w", err)
+	}
+
+	// Resume submodule worktrees
+	if i.gitWorktree.IsSubmoduleAware() {
+		if err := i.gitWorktree.ResumeSubmodules(); err != nil {
+			log.ErrorLog.Printf("failed to resume submodules: %v", err)
+			return fmt.Errorf("failed to resume submodules: %w", err)
+		}
 	}
 
 	// Check if tmux session still exists from pause, otherwise create new one

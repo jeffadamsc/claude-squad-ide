@@ -158,6 +158,57 @@ func (g *GitWorktree) Prune() error {
 	return nil
 }
 
+// PauseSubmodules commits dirty changes in each submodule and removes their worktrees.
+func (g *GitWorktree) PauseSubmodules() error {
+	for path, sw := range g.submodules {
+		dirty, err := sw.IsDirty()
+		if err != nil {
+			log.ErrorLog.Printf("failed to check if submodule %s is dirty: %v", path, err)
+			continue
+		}
+		if dirty {
+			msg := fmt.Sprintf("[claudesquad] paused submodule '%s'", path)
+			if err := sw.CommitChanges(msg); err != nil {
+				return fmt.Errorf("failed to commit submodule %s: %w", path, err)
+			}
+		}
+		if err := sw.Remove(); err != nil {
+			log.ErrorLog.Printf("failed to remove submodule worktree %s: %v", path, err)
+		}
+	}
+	return nil
+}
+
+// DiscardSubmodulePointers reverts any submodule pointer changes in the parent worktree.
+func (g *GitWorktree) DiscardSubmodulePointers() error {
+	if len(g.submodules) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(g.submodules))
+	for p := range g.submodules {
+		paths = append(paths, p)
+	}
+	args := append([]string{"checkout", "--"}, paths...)
+	_, err := g.runGitCommand(g.worktreePath, args...)
+	if err != nil {
+		log.ErrorLog.Printf("failed to discard submodule pointers: %v", err)
+	}
+	return nil
+}
+
+// ResumeSubmodules recreates submodule worktrees after a resume.
+func (g *GitWorktree) ResumeSubmodules() error {
+	// Deinit all submodules to ensure clean state
+	_, _ = g.runGitCommand(g.worktreePath, "submodule", "deinit", "--all", "-f")
+
+	for path, sw := range g.submodules {
+		if err := sw.Setup(); err != nil {
+			return fmt.Errorf("failed to resume submodule %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
 // CleanupWorktrees removes all worktrees and their associated branches
 func CleanupWorktrees() error {
 	worktreesDir, err := getWorktreeDirectory()

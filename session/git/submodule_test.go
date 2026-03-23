@@ -6,6 +6,57 @@ import (
 	"testing"
 )
 
+func TestPauseResumeWithSubmodules(t *testing.T) {
+	parentDir, _ := setupTestRepoWithSubmodules(t)
+
+	gw, _, err := NewGitWorktree(parentDir, "pause-test")
+	if err != nil {
+		t.Fatalf("NewGitWorktree: %v", err)
+	}
+	if err := gw.Setup(); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	subs, _ := ListSubmodules(parentDir)
+	if err := gw.InitSubmodules(parentDir, []string{subs[0].Path}); err != nil {
+		t.Fatalf("InitSubmodules: %v", err)
+	}
+
+	// Make a change in the submodule worktree
+	subWT := gw.GetSubmodules()[subs[0].Path]
+	writeFile(t, filepath.Join(subWT.GetWorktreePath(), "change.txt"), "changed")
+
+	// Pause submodules (commit + remove)
+	if err := gw.PauseSubmodules(); err != nil {
+		t.Fatalf("PauseSubmodules: %v", err)
+	}
+
+	// Submodule worktree should be removed
+	if _, err := os.Stat(subWT.GetWorktreePath()); !os.IsNotExist(err) {
+		t.Error("expected submodule worktree to be removed after pause")
+	}
+
+	// Discard parent pointer changes
+	if err := gw.DiscardSubmodulePointers(); err != nil {
+		t.Fatalf("DiscardSubmodulePointers: %v", err)
+	}
+
+	// Resume submodules
+	if err := gw.ResumeSubmodules(); err != nil {
+		t.Fatalf("ResumeSubmodules: %v", err)
+	}
+
+	// Submodule worktree should exist again
+	if _, err := os.Stat(subWT.GetWorktreePath()); os.IsNotExist(err) {
+		t.Error("expected submodule worktree to exist after resume")
+	}
+
+	// Cleanup
+	if err := gw.Cleanup(); err != nil {
+		t.Fatalf("Cleanup: %v", err)
+	}
+}
+
 func TestSubmoduleWorktreeSetupAndCleanup(t *testing.T) {
 	parentDir, _ := setupTestRepoWithSubmodules(t)
 
