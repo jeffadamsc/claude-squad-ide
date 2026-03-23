@@ -165,3 +165,44 @@ func TestBranchPicker_FilterHidesNewBranchOnExactMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestTextInputOverlay_GetBaseBranch_NoBranchPicker(t *testing.T) {
+	o := NewTextInputOverlay("Prompt", "")
+	if got := o.GetBaseBranch(); got != "HEAD" {
+		t.Errorf("expected GetBaseBranch() = HEAD for plain overlay, got %s", got)
+	}
+}
+
+func TestTextInputOverlay_GetBaseBranch_NewBranchDefault(t *testing.T) {
+	o := NewTextInputOverlayWithBranchPicker("Prompt", "", nil)
+	if got := o.GetBaseBranch(); got != "HEAD" {
+		t.Errorf("expected GetBaseBranch() = HEAD by default, got %s", got)
+	}
+}
+
+func TestTextInputOverlay_GetBaseBranch_WithOriginMain(t *testing.T) {
+	o := NewTextInputOverlayWithBranchPicker("Prompt", "", nil)
+	o.SetNewBranchOptions([]string{"origin/main"})
+	if got := o.GetBaseBranch(); got != "origin/main" {
+		t.Errorf("expected GetBaseBranch() = origin/main after SetNewBranchOptions, got %s", got)
+	}
+}
+
+func TestTextInputOverlay_GetBaseBranch_ExistingBranch(t *testing.T) {
+	o := NewTextInputOverlayWithBranchPicker("Prompt", "", nil)
+	o.SetBranchResults([]string{"feature/foo"}, 0)
+	// Tab twice to reach the branch picker: toggle(0) → textarea(1) → branchPicker(2)
+	o.HandleKeyPress(tea.KeyMsg{Type: tea.KeyTab})
+	o.HandleKeyPress(tea.KeyMsg{Type: tea.KeyTab})
+	// Press Down to move from the HEAD new-branch option to the existing branch
+	o.HandleKeyPress(tea.KeyMsg{Type: tea.KeyDown})
+	if got := o.GetBaseBranch(); got != "HEAD" {
+		t.Errorf("expected GetBaseBranch() = HEAD when existing branch selected, got %s", got)
+	}
+}
+
+func TestTextInputOverlay_SetNewBranchOptions_NoBranchPicker(t *testing.T) {
+	o := NewTextInputOverlay("Prompt", "")
+	// Should be a no-op and not panic
+	o.SetNewBranchOptions([]string{"origin/main"})
+}
