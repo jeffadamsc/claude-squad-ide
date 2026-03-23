@@ -114,6 +114,33 @@ func TestSetupNewWorktree_FromHEAD(t *testing.T) {
 	}
 }
 
+func TestDetectDefaultRemoteBranchFromGitDir_Main(t *testing.T) {
+	repo := setupRepoWithRemote(t, "main")
+	gitDir := filepath.Join(repo, ".git")
+	result := detectDefaultRemoteBranchFromGitDir(gitDir)
+	if result != "origin/main" {
+		t.Errorf("expected origin/main, got %q", result)
+	}
+}
+
+func TestDetectDefaultRemoteBranchFromGitDir_Master(t *testing.T) {
+	repo := setupRepoWithRemote(t, "master")
+	gitDir := filepath.Join(repo, ".git")
+	result := detectDefaultRemoteBranchFromGitDir(gitDir)
+	if result != "origin/master" {
+		t.Errorf("expected origin/master, got %q", result)
+	}
+}
+
+func TestDetectDefaultRemoteBranchFromGitDir_Neither(t *testing.T) {
+	repo := setupRepoWithRemote(t, "develop")
+	gitDir := filepath.Join(repo, ".git")
+	result := detectDefaultRemoteBranchFromGitDir(gitDir)
+	if result != "" {
+		t.Errorf("expected empty string, got %q", result)
+	}
+}
+
 // Helper to capture command output
 func runCmdOutput(t *testing.T, dir string, args ...string) string {
 	t.Helper()
