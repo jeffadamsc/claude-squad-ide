@@ -403,6 +403,28 @@ func TestGitWorktreeWithSubmodules(t *testing.T) {
 	}
 }
 
+func TestSubmoduleSetup_FetchesAndDetectsBase(t *testing.T) {
+	parentDir, _ := setupTestRepoWithSubmodules(t)
+	subs, err := ListSubmodules(parentDir)
+	if err != nil {
+		t.Fatalf("ListSubmodules: %v", err)
+	}
+
+	parentWorktree := filepath.Join(t.TempDir(), "parent-wt")
+	runCmd(t, parentDir, "git", "worktree", "add", "-b", "test-sub-detect", parentWorktree)
+
+	targetPath := filepath.Join(parentWorktree, subs[0].Path)
+	sw := NewSubmoduleWorktree(subs[0].Path, subs[0].GitDir, targetPath, "test-sub-detect-branch")
+	if err := sw.Setup(); err != nil {
+		t.Fatalf("Setup: %v", err)
+	}
+
+	// baseCommitSHA should be set (non-empty)
+	if sw.GetBaseCommitSHA() == "" {
+		t.Error("expected baseCommitSHA to be set after Setup()")
+	}
+}
+
 func TestSubmoduleWorktreeIsDirtyAndCommit(t *testing.T) {
 	parentDir, _ := setupTestRepoWithSubmodules(t)
 	subs, _ := ListSubmodules(parentDir)

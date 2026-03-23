@@ -42,9 +42,25 @@ func (s *SubmoduleWorktree) Setup() error {
 		return fmt.Errorf("failed to clean target path: %w", err)
 	}
 
-	headOutput, err := s.runGitDirCommand("rev-parse", "HEAD")
+	// Fetch origin to ensure latest state (best-effort)
+	_, _ = s.runGitDirCommand("fetch", "origin")
+
+	// Detect the default remote branch for this submodule
+	baseRef := "HEAD"
+	detected := detectDefaultRemoteBranchFromGitDir(s.gitDir)
+	if detected != "" {
+		baseRef = detected
+	}
+
+	headOutput, err := s.runGitDirCommand("rev-parse", baseRef)
 	if err != nil {
-		return fmt.Errorf("failed to get submodule HEAD: %w", err)
+		// Fall back to HEAD if the detected ref fails
+		if baseRef != "HEAD" {
+			headOutput, err = s.runGitDirCommand("rev-parse", "HEAD")
+		}
+		if err != nil {
+			return fmt.Errorf("failed to get submodule base commit: %w", err)
+		}
 	}
 	s.baseCommitSHA = strings.TrimSpace(headOutput)
 
@@ -53,7 +69,8 @@ func (s *SubmoduleWorktree) Setup() error {
 		s.isExistingBranch = true
 		_, err = s.runGitDirCommand("worktree", "add", s.worktreePath, s.branchName)
 	} else {
-		_, err = s.runGitDirCommand("worktree", "add", "-b", s.branchName, s.worktreePath)
+		// Branch from the detected base commit
+		_, err = s.runGitDirCommand("worktree", "add", "-b", s.branchName, s.worktreePath, s.baseCommitSHA)
 	}
 	if err != nil {
 		return fmt.Errorf("failed to create submodule worktree: %w", err)

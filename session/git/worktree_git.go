@@ -52,6 +52,19 @@ func SearchBranches(repoPath, filter string) ([]string, error) {
 	return branches, nil
 }
 
+// detectDefaultRemoteBranchFromGitDir checks for origin/main or origin/master
+// using --git-dir (for submodules that don't have a working directory yet).
+// Returns the first found ref, or empty string if neither exists.
+func detectDefaultRemoteBranchFromGitDir(gitDir string) string {
+	for _, ref := range []string{"origin/main", "origin/master"} {
+		cmd := exec.Command("git", "--git-dir="+gitDir, "rev-parse", "--verify", ref)
+		if err := cmd.Run(); err == nil {
+			return ref
+		}
+	}
+	return ""
+}
+
 // DetectDefaultRemoteBranches checks which of origin/main and origin/master exist
 // in the given repo. Returns a slice in display order (main first, then master).
 // Uses git rev-parse --verify for clean existence checks with no output parsing.
