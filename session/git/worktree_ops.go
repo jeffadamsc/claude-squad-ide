@@ -209,6 +209,41 @@ func (g *GitWorktree) ResumeSubmodules() error {
 	return nil
 }
 
+// cleanupSubmoduleWorktrees finds and properly removes any submodule worktrees
+// within a parent worktree directory before it gets deleted.
+func cleanupSubmoduleWorktrees(worktreePath string) {
+	filepath.WalkDir(worktreePath, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil // skip errors
+		}
+		// Look for .git files (not directories) in subdirectories
+		if d.Name() != ".git" || d.IsDir() || path == filepath.Join(worktreePath, ".git") {
+			return nil
+		}
+		// Read the .git file to find the gitdir
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return nil
+		}
+		line := strings.TrimSpace(string(content))
+		if !strings.HasPrefix(line, "gitdir: ") {
+			return nil
+		}
+		gitDir := strings.TrimPrefix(line, "gitdir: ")
+		if !filepath.IsAbs(gitDir) {
+			gitDir = filepath.Join(filepath.Dir(path), gitDir)
+		}
+
+		// The submodule worktree path is the parent of this .git file
+		subWorktreePath := filepath.Dir(path)
+		cmd := exec.Command("git", "--git-dir", gitDir, "worktree", "remove", "--force", subWorktreePath)
+		if output, err := cmd.CombinedOutput(); err != nil {
+			log.ErrorLog.Printf("failed to remove submodule worktree %s: %s (%v)", subWorktreePath, output, err)
+		}
+		return nil
+	})
+}
+
 // CleanupWorktrees removes all worktrees and their associated branches
 func CleanupWorktrees() error {
 	worktreesDir, err := getWorktreeDirectory()
@@ -261,6 +296,9 @@ func CleanupWorktrees() error {
 					break
 				}
 			}
+
+			// Clean up submodule worktrees before removing the directory
+			cleanupSubmoduleWorktrees(worktreePath)
 
 			// Remove the worktree directory
 			os.RemoveAll(worktreePath)
