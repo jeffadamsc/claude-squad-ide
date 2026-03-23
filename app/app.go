@@ -477,6 +477,10 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 					if selectedProgram != "" {
 						selected.Program = selectedProgram
 					}
+					selectedSubmodules := m.textInputOverlay.GetSelectedSubmodules()
+					if len(selectedSubmodules) > 0 {
+						selected.SetSelectedSubmodules(selectedSubmodules)
+					}
 					selected.Prompt = prompt
 
 					// Finalize into list and start
@@ -756,6 +760,33 @@ func (m *home) handleKeyPress(msg tea.KeyMsg) (mod tea.Model, cmd tea.Cmd) {
 			m.state = stateDefault
 		})
 		return m, nil
+	case keys.KeyAddSubmodule:
+		selected := m.list.GetSelectedInstance()
+		if selected == nil || !selected.Started() || selected.Paused() {
+			return m, nil
+		}
+		gw, err := selected.GetGitWorktree()
+		if err != nil {
+			return m, nil
+		}
+		if !gw.IsSubmoduleAware() {
+			return m, m.handleError(fmt.Errorf("session is not submodule-aware"))
+		}
+		// TODO: implement runtime submodule addition overlay
+		// For now, show available submodules count
+		cwd, _ := os.Getwd()
+		allSubs, _ := git.ListSubmodules(cwd)
+		existing := gw.GetSubmodules()
+		available := 0
+		for _, s := range allSubs {
+			if _, exists := existing[s.Path]; !exists {
+				available++
+			}
+		}
+		if available == 0 {
+			return m, m.handleError(fmt.Errorf("all submodules already initialized"))
+		}
+		return m, m.handleError(fmt.Errorf("runtime submodule addition not yet implemented — select submodules during session creation"))
 	default:
 		return m, nil
 	}
@@ -872,7 +903,17 @@ func (m *home) handleError(err error) tea.Cmd {
 }
 
 func (m *home) newPromptOverlay() *overlay.TextInputOverlay {
-	return overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", m.appConfig.GetProfiles())
+	profiles := m.appConfig.GetProfiles()
+	cwd, _ := os.Getwd()
+	submodules, _ := git.ListSubmodules(cwd)
+	var subPaths []string
+	for _, s := range submodules {
+		subPaths = append(subPaths, s.Path)
+	}
+	if len(subPaths) > 0 {
+		return overlay.NewTextInputOverlayWithSubmodules("Enter prompt", "", profiles, subPaths)
+	}
+	return overlay.NewTextInputOverlayWithBranchPicker("Enter prompt", "", profiles)
 }
 
 // cancelPromptOverlay cancels the prompt overlay, cleaning up unstarted instances.

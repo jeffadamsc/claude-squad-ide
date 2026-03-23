@@ -58,6 +58,9 @@ type Instance struct {
 	// selectedBranch is the existing branch to start on (empty = new branch from HEAD)
 	selectedBranch string
 
+	// selectedSubmodules is the list of submodule paths to initialize in the worktree
+	selectedSubmodules []string
+
 	// The below fields are initialized upon calling Start().
 
 	started bool
@@ -222,6 +225,11 @@ func (i *Instance) SetSelectedBranch(branch string) {
 	i.selectedBranch = branch
 }
 
+// SetSelectedSubmodules sets the submodule paths to initialize when starting the instance.
+func (i *Instance) SetSelectedSubmodules(subs []string) {
+	i.selectedSubmodules = subs
+}
+
 // firstTimeSetup is true if this is a new instance. Otherwise, it's one loaded from storage.
 func (i *Instance) Start(firstTimeSetup bool) error {
 	if i.Title == "" {
@@ -279,6 +287,14 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		if err := i.gitWorktree.Setup(); err != nil {
 			setupErr = fmt.Errorf("failed to setup git worktree: %w", err)
 			return setupErr
+		}
+
+		// Initialize selected submodules
+		if len(i.selectedSubmodules) > 0 {
+			if err := i.gitWorktree.InitSubmodules(i.Path, i.selectedSubmodules); err != nil {
+				setupErr = fmt.Errorf("failed to init submodules: %w", err)
+				return setupErr
+			}
 		}
 
 		// Create new session

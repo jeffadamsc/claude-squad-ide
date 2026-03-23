@@ -42,8 +42,9 @@ type TextInputOverlay struct {
 	width         int
 	height        int
 	profilePicker *ProfilePicker
-	branchPicker  *BranchPicker
-	numStops      int // total number of focus stops
+	branchPicker    *BranchPicker
+	submodulePicker *SubmodulePicker
+	numStops        int // total number of focus stops
 }
 
 // NewTextInputOverlay creates a new text input overlay with the given title and initial value.
@@ -83,6 +84,17 @@ func NewTextInputOverlayWithBranchPicker(title string, initialValue string, prof
 	return overlay
 }
 
+// NewTextInputOverlayWithSubmodules creates a text input overlay that includes a branch picker
+// and a submodule picker for selecting which submodules to initialize in the worktree.
+func NewTextInputOverlayWithSubmodules(title string, initialValue string, profiles []config.Profile, submodules []string) *TextInputOverlay {
+	overlay := NewTextInputOverlayWithBranchPicker(title, initialValue, profiles)
+	if len(submodules) > 0 {
+		overlay.submodulePicker = NewSubmodulePicker(submodules)
+		overlay.numStops++
+	}
+	return overlay
+}
+
 func newTextarea(initialValue string) textarea.Model {
 	ti := textarea.New()
 	ti.SetValue(initialValue)
@@ -104,6 +116,9 @@ func (t *TextInputOverlay) SetSize(width, height int) {
 	}
 	if t.profilePicker != nil {
 		t.profilePicker.SetWidth(width - 6)
+	}
+	if t.submodulePicker != nil {
+		t.submodulePicker.SetWidth(width - 6)
 	}
 }
 
@@ -146,6 +161,19 @@ func (t *TextInputOverlay) isBranchPicker() bool {
 	return t.FocusIndex == 1
 }
 
+// isSubmodulePicker returns true if the current focus is on the submodule picker.
+func (t *TextInputOverlay) isSubmodulePicker() bool {
+	if t.submodulePicker == nil {
+		return false
+	}
+	// submodulePicker is right after branchPicker
+	expectedIndex := 2 // textarea(0) + branchPicker(1) + submodulePicker(2)
+	if t.profilePicker != nil && t.profilePicker.HasMultiple() {
+		expectedIndex = 3 // profile(0) + textarea(1) + branchPicker(2) + submodulePicker(3)
+	}
+	return t.FocusIndex == expectedIndex
+}
+
 // setFocusIndex sets the focus index and syncs focus state.
 func (t *TextInputOverlay) setFocusIndex(i int) {
 	t.FocusIndex = i
@@ -173,6 +201,13 @@ func (t *TextInputOverlay) updateFocusState() {
 			t.profilePicker.Blur()
 		}
 	}
+	if t.submodulePicker != nil {
+		if t.isSubmodulePicker() {
+			t.submodulePicker.Focus()
+		} else {
+			t.submodulePicker.Blur()
+		}
+	}
 }
 
 // HandleKeyPress processes a key press and updates the state accordingly.
@@ -197,7 +232,12 @@ func (t *TextInputOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 			return true, false
 		}
 		if t.isBranchPicker() {
-			// Enter on branch picker = advance to enter button
+			// Enter on branch picker = advance to next stop
+			t.setFocusIndex(t.FocusIndex + 1)
+			return false, false
+		}
+		if t.isSubmodulePicker() {
+			// Enter on submodule picker = advance to enter button
 			t.setFocusIndex(t.numStops - 1)
 			return false, false
 		}
@@ -226,6 +266,10 @@ func (t *TextInputOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 			_, filterChanged := t.branchPicker.HandleKeyPress(msg)
 			return false, filterChanged
 		}
+		if t.isSubmodulePicker() {
+			t.submodulePicker.HandleKeyPress(msg)
+			return false, false
+		}
 		return false, false
 	}
 }
@@ -251,6 +295,15 @@ func (t *TextInputOverlay) GetSelectedProgram() string {
 		return ""
 	}
 	return t.profilePicker.GetSelectedProfile().Program
+}
+
+// GetSelectedSubmodules returns the selected submodule paths from the submodule picker.
+// Returns nil if no submodule picker is present.
+func (t *TextInputOverlay) GetSelectedSubmodules() []string {
+	if t.submodulePicker == nil {
+		return nil
+	}
+	return t.submodulePicker.GetSelected()
 }
 
 // BranchFilterVersion returns the current filter version from the branch picker.
@@ -324,6 +377,12 @@ func (t *TextInputOverlay) Render() string {
 	if t.branchPicker != nil {
 		content += divider + "\n\n"
 		content += t.branchPicker.Render() + "\n\n"
+	}
+
+	// Render submodule picker if present
+	if t.submodulePicker != nil && !t.submodulePicker.IsEmpty() {
+		content += divider + "\n\n"
+		content += t.submodulePicker.Render() + "\n\n"
 	}
 
 	content += divider + "\n\n"
