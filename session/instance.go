@@ -62,6 +62,10 @@ type Instance struct {
 	// selectedSubmodules is the list of submodule paths to initialize in the worktree
 	selectedSubmodules []string
 
+	// inPlace is true when this session runs directly in the working directory
+	// without creating git branches or worktrees.
+	inPlace bool
+
 	// The below fields are initialized upon calling Start().
 
 	started bool
@@ -442,6 +446,11 @@ func (i *Instance) SetTitle(title string) error {
 
 func (i *Instance) Paused() bool {
 	return i.Status == Paused
+}
+
+// IsInPlace returns true if this is an in-place session (no git isolation).
+func (i *Instance) IsInPlace() bool {
+	return i.inPlace
 }
 
 // TmuxAlive returns true if the tmux session is alive. This is a sanity check before attaching.
