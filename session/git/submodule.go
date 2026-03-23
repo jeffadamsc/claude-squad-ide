@@ -52,17 +52,17 @@ func (s *SubmoduleWorktree) Setup() error {
 		baseRef = detected
 	}
 
-	headOutput, err := s.runGitDirCommand("rev-parse", baseRef)
+	baseOutput, err := s.runGitDirCommand("rev-parse", baseRef)
 	if err != nil {
 		// Fall back to HEAD if the detected ref fails
 		if baseRef != "HEAD" {
-			headOutput, err = s.runGitDirCommand("rev-parse", "HEAD")
+			baseOutput, err = s.runGitDirCommand("rev-parse", "HEAD")
 		}
 		if err != nil {
 			return fmt.Errorf("failed to get submodule base commit: %w", err)
 		}
 	}
-	s.baseCommitSHA = strings.TrimSpace(headOutput)
+	s.baseCommitSHA = strings.TrimSpace(baseOutput)
 
 	_, err = s.runGitDirCommand("show-ref", "--verify", fmt.Sprintf("refs/heads/%s", s.branchName))
 	if err == nil {

@@ -148,7 +148,7 @@ func (bp *BranchPicker) visibleItems() []string {
 func (bp *BranchPicker) IsNewBranch() bool {
 	items := bp.visibleItems()
 	if bp.cursor < 0 || bp.cursor >= len(items) {
-		return false
+		return true // default to new branch when cursor is out of bounds
 	}
 	return strings.HasPrefix(items[bp.cursor], "New branch")
 }
