@@ -41,10 +41,11 @@ type TextInputOverlay struct {
 	OnSubmit      func()
 	width         int
 	height        int
-	profilePicker *ProfilePicker
+	profilePicker   *ProfilePicker
 	branchPicker    *BranchPicker
 	submodulePicker *SubmodulePicker
-	numStops        int // total number of focus stops
+	numStops        int  // total number of focus stops
+	inPlace         bool // whether in-place mode is active (no git isolation)
 }
 
 // NewTextInputOverlay creates a new text input overlay with the given title and initial value.
@@ -53,7 +54,7 @@ func NewTextInputOverlay(title string, initialValue string) *TextInputOverlay {
 	return &TextInputOverlay{
 		textarea: ti,
 		Title:    title,
-		numStops: 2, // textarea + enter button
+		numStops: 3, // toggle + textarea + enter button
 	}
 }
 
@@ -68,9 +69,9 @@ func NewTextInputOverlayWithBranchPicker(title string, initialValue string, prof
 		pp = NewProfilePicker(profiles)
 	}
 
-	numStops := 3 // textarea + branch picker + enter button
+	numStops := 4 // toggle + textarea + branch picker + enter button
 	if pp != nil && pp.HasMultiple() {
-		numStops = 4 // profile picker + textarea + branch picker + enter button
+		numStops = 5 // toggle + profile picker + textarea + branch picker + enter button
 	}
 
 	overlay := &TextInputOverlay{
@@ -132,17 +133,27 @@ func (t *TextInputOverlay) View() string {
 	return t.Render()
 }
 
+// isInPlaceToggle returns true if the current focus is on the in-place toggle.
+// The toggle is always at index 0.
+func (t *TextInputOverlay) isInPlaceToggle() bool {
+	return t.FocusIndex == 0
+}
+
 // isProfilePicker returns true if the current focus is on the profile picker.
 func (t *TextInputOverlay) isProfilePicker() bool {
-	return t.profilePicker != nil && t.profilePicker.HasMultiple() && t.FocusIndex == 0
+	if t.profilePicker == nil || !t.profilePicker.HasMultiple() {
+		return false
+	}
+	return t.FocusIndex == 1 // toggle(0), profile(1)
 }
 
 // isTextarea returns true if the current focus is on the textarea.
 func (t *TextInputOverlay) isTextarea() bool {
+	offset := 1 // toggle is at 0
 	if t.profilePicker != nil && t.profilePicker.HasMultiple() {
-		return t.FocusIndex == 1
+		offset = 2 // toggle(0), profile(1), textarea(2)
 	}
-	return t.FocusIndex == 0
+	return t.FocusIndex == offset
 }
 
 // isEnterButton returns true if the current focus is on the enter button.
@@ -152,26 +163,26 @@ func (t *TextInputOverlay) isEnterButton() bool {
 
 // isBranchPicker returns true if the current focus is on the branch picker.
 func (t *TextInputOverlay) isBranchPicker() bool {
-	if t.branchPicker == nil {
+	if t.branchPicker == nil || t.inPlace {
 		return false
 	}
+	offset := 2 // toggle(0), textarea(1), branch(2)
 	if t.profilePicker != nil && t.profilePicker.HasMultiple() {
-		return t.FocusIndex == 2
+		offset = 3 // toggle(0), profile(1), textarea(2), branch(3)
 	}
-	return t.FocusIndex == 1
+	return t.FocusIndex == offset
 }
 
 // isSubmodulePicker returns true if the current focus is on the submodule picker.
 func (t *TextInputOverlay) isSubmodulePicker() bool {
-	if t.submodulePicker == nil {
+	if t.submodulePicker == nil || t.inPlace {
 		return false
 	}
-	// submodulePicker is right after branchPicker
-	expectedIndex := 2 // textarea(0) + branchPicker(1) + submodulePicker(2)
+	offset := 3 // toggle(0), textarea(1), branch(2), submodule(3)
 	if t.profilePicker != nil && t.profilePicker.HasMultiple() {
-		expectedIndex = 3 // profile(0) + textarea(1) + branchPicker(2) + submodulePicker(3)
+		offset = 4 // toggle(0), profile(1), textarea(2), branch(3), submodule(4)
 	}
-	return t.FocusIndex == expectedIndex
+	return t.FocusIndex == offset
 }
 
 // setFocusIndex sets the focus index and syncs focus state.
@@ -208,6 +219,36 @@ func (t *TextInputOverlay) updateFocusState() {
 			t.submodulePicker.Blur()
 		}
 	}
+}
+
+// IsInPlace returns whether in-place mode is active.
+func (t *TextInputOverlay) IsInPlace() bool {
+	return t.inPlace
+}
+
+// SetInPlace sets in-place mode and recalculates focus stops.
+func (t *TextInputOverlay) SetInPlace(inPlace bool) {
+	t.inPlace = inPlace
+	t.recalcNumStops()
+	t.FocusIndex = 0
+	t.updateFocusState()
+}
+
+// recalcNumStops recalculates the total number of focus stops based on current state.
+func (t *TextInputOverlay) recalcNumStops() {
+	stops := 3 // toggle + textarea + enter button
+	if t.profilePicker != nil && t.profilePicker.HasMultiple() {
+		stops++
+	}
+	if !t.inPlace {
+		if t.branchPicker != nil {
+			stops++
+		}
+		if t.submodulePicker != nil {
+			stops++
+		}
+	}
+	t.numStops = stops
 }
 
 // HandleKeyPress processes a key press and updates the state accordingly.
@@ -252,6 +293,13 @@ func (t *TextInputOverlay) HandleKeyPress(msg tea.KeyMsg) (bool, bool) {
 		}
 		return false, false
 	default:
+		// Space toggles in-place when toggle is focused
+		if t.isInPlaceToggle() && msg.String() == " " {
+			t.inPlace = !t.inPlace
+			t.recalcNumStops()
+			t.updateFocusState()
+			return false, false
+		}
 		if t.isTextarea() {
 			t.textarea, _ = t.textarea.Update(msg)
 			return false, false
@@ -364,6 +412,18 @@ func (t *TextInputOverlay) Render() string {
 	// Build the view
 	var content string
 
+	// Render in-place toggle
+	toggleLabel := "[ ] In-place (no git isolation)"
+	if t.inPlace {
+		toggleLabel = "[x] In-place (no git isolation)"
+	}
+	if t.isInPlaceToggle() {
+		content += lipgloss.NewStyle().Foreground(lipgloss.Color("12")).Bold(true).Render(toggleLabel) + "\n\n"
+	} else {
+		content += lipgloss.NewStyle().Foreground(lipgloss.Color("8")).Render(toggleLabel) + "\n\n"
+	}
+	content += divider + "\n\n"
+
 	// Render profile picker if present, above the prompt
 	if t.profilePicker != nil {
 		content += t.profilePicker.Render() + "\n\n"
@@ -374,13 +434,13 @@ func (t *TextInputOverlay) Render() string {
 	content += t.textarea.View() + "\n\n"
 
 	// Render branch picker if present, with dividers
-	if t.branchPicker != nil {
+	if t.branchPicker != nil && !t.inPlace {
 		content += divider + "\n\n"
 		content += t.branchPicker.Render() + "\n\n"
 	}
 
 	// Render submodule picker if present
-	if t.submodulePicker != nil && !t.submodulePicker.IsEmpty() {
+	if t.submodulePicker != nil && !t.submodulePicker.IsEmpty() && !t.inPlace {
 		content += divider + "\n\n"
 		content += t.submodulePicker.Render() + "\n\n"
 	}
