@@ -140,6 +140,39 @@ Each profile has two fields:
 
 If no profiles are defined, Claude Squad uses `default_program` directly as the launch command (the default is `claude`).
 
+### Submodule-Aware Sessions
+
+If your repo uses git submodules, Claude Squad can manage isolated worktrees for each submodule within a session. This lets you run multiple concurrent sessions that touch the same submodules without conflicts.
+
+#### How to use it
+
+1. **Create a session** (`n` or `N`) from a repo that has submodules
+2. A **submodule picker** appears below the branch picker — select which submodules this session needs
+   - `↑`/`↓` or `j`/`k` — navigate
+   - `space` — toggle selection
+   - `a` — select all
+3. The session gets its own worktree for the parent repo **and** each selected submodule
+4. Your AI agent works in the parent worktree where the selected submodules are real worktrees (not just git pointers)
+
+#### What changes in the UI
+
+- The **session list** shows active submodules after the branch name: `feature-branch [backend,portal]`
+- The **diff pane** shows aggregated diffs with section headers (`--- parent ---`, `--- verve-backend ---`)
+- The `+N,-M` stats in the session list combine changes across all components
+
+#### Pushing and pausing
+
+- **Push** (`s`) pushes the parent branch and all submodule branches independently. A reminder is shown to update submodule pointers in the parent repo when you're ready to integrate.
+- **Pause** (`c`) commits submodule changes first, then discards submodule pointer changes in the parent, keeping sessions isolated.
+- **Resume** (`r`) recreates all worktrees and restores your changes.
+
+#### Requirements
+
+- Submodules must be initialized in the original repo (`git submodule init && git submodule update`)
+- Each submodule must have a remote named `origin` for pushing
+
+For architecture and implementation details, see [Submodule Sessions Technical Details](docs/submodule-sessions.md).
+
 ### FAQs
 
 #### Failed to start new session
