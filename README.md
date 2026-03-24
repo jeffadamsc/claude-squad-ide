@@ -1,21 +1,15 @@
 # Claude Squad [![CI](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml/badge.svg)](https://github.com/smtg-ai/claude-squad/actions/workflows/build.yml) [![GitHub Release](https://img.shields.io/github/v/release/smtg-ai/claude-squad)](https://github.com/smtg-ai/claude-squad/releases/latest)
 
-[Claude Squad](https://smtg-ai.github.io/claude-squad/) is a terminal app that manages multiple [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini](https://github.com/google-gemini/gemini-cli) (and other local agents including [Aider](https://github.com/Aider-AI/aider)) in separate workspaces, allowing you to work on multiple tasks simultaneously.
-
+[Claude Squad](https://smtg-ai.github.io/claude-squad/) is a native desktop app that manages multiple [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini](https://github.com/google-gemini/gemini-cli) (and other local agents including [Aider](https://github.com/Aider-AI/aider)) in separate workspaces, allowing you to work on multiple tasks simultaneously.
 
 ![Claude Squad Screenshot](assets/screenshot.png)
 
 ### Highlights
-- Complete tasks in the background (including yolo / auto-accept mode!)
-- Manage instances and tasks in one terminal window
-- Review changes before applying them, checkout changes before pushing them
-- Each task gets its own isolated git workspace, so no conflicts
-
-<br />
-
-https://github.com/user-attachments/assets/aef18253-e58f-4525-9032-f5a3d66c975a
-
-<br />
+- Run multiple AI agent sessions side by side in a native GUI
+- Split panes to view several sessions at once
+- Each task gets its own isolated git workspace (worktree), so no conflicts
+- Auto-accept mode for hands-off background work
+- Create sessions with a prompt, branch, and profile in one dialog
 
 ### Installation
 
@@ -29,8 +23,6 @@ ln -s "$(brew --prefix)/bin/claude-squad" "$(brew --prefix)/bin/cs"
 ```
 
 #### Manual
-
-Claude Squad can also be installed by running the following command:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/smtg-ai/claude-squad/main/install.sh | bash
@@ -64,51 +56,45 @@ Available Commands:
   version     Print the version number of claude-squad
 
 Flags:
-  -y, --autoyes          [experimental] If enabled, all instances will automatically accept prompts for claude code & aider
+  -y, --autoyes          [experimental] If enabled, all instances will automatically accept prompts
   -h, --help             help for claude-squad
   -p, --program string   Program to run in new instances (e.g. 'aider --model ollama_chat/gemma3:1b')
 ```
 
-Run the application with:
+Launch the app from inside a git repository:
 
 ```bash
 cs
 ```
+
 NOTE: The default program is `claude` and we recommend using the latest version.
 
-<br />
-
-<b>Using Claude Squad with other AI assistants:</b>
+**Using Claude Squad with other AI assistants:**
 - For [Codex](https://github.com/openai/codex): Set your API key with `export OPENAI_API_KEY=<your_key>`
 - Launch with specific assistants:
    - Codex: `cs -p "codex"`
    - Aider: `cs -p "aider ..."`
    - Gemini: `cs -p "gemini"`
-- Make this the default, by modifying the config file (locate with `cs debug`)
+- Make this the default by modifying the config file (locate with `cs debug`)
 
-<br />
+### Keyboard Shortcuts
 
-#### Menu
-The menu at the bottom of the screen shows available commands: 
+All shortcuts use **Cmd+Shift** (macOS) or **Ctrl+Shift** (Linux/Windows) as the modifier.
 
-##### Instance/Session Management
-- `n` - Create a new session
-- `N` - Create a new session with a prompt
-- `D` - Kill (delete) the selected session
-- `↑/j`, `↓/k` - Navigate between sessions
-
-##### Actions
-- `↵/o` - Attach to the selected session to reprompt
-- `ctrl-q` - Detach from session
-- `s` - Commit and push branch to github
-- `c` - Checkout. Commits changes and pauses the session
-- `r` - Resume a paused session
-- `?` - Show help menu
-
-##### Navigation
-- `tab` - Switch between preview tab and diff tab
-- `q` - Quit the application
-- `shift-↓/↑` - scroll in diff view
+| Shortcut | Action |
+|----------|--------|
+| `N` | New session |
+| `\` | Split pane vertically |
+| `-` | Split pane horizontally |
+| `W` | Close focused pane |
+| `Arrow keys` | Navigate between panes |
+| `J` / `K` | Move down / up in the sidebar session list |
+| `Enter` | Open selected session in the focused pane |
+| `D` | Kill (delete) session |
+| `P` | Push changes |
+| `R` | Pause / resume session |
+| `B` | Toggle sidebar visibility |
+| `Q` | Quit |
 
 ### Configuration
 
@@ -116,7 +102,7 @@ Claude Squad stores its configuration in `~/.claude-squad/config.json`. You can 
 
 #### Profiles
 
-Profiles let you define multiple named program configurations and switch between them when creating a new session. When more than one profile is defined, the session creation overlay shows a profile picker that you can navigate with `←`/`→`.
+Profiles let you define multiple named program configurations and switch between them when creating a new session. The new session dialog shows a profile dropdown when more than one profile is defined.
 
 To configure profiles, add a `profiles` array to your config file and set `default_program` to the name of the profile to select by default:
 
@@ -151,7 +137,7 @@ underlying program (ex. `claude`) to the latest version.
 
 1. **tmux** to create isolated terminal sessions for each agent
 2. **git worktrees** to isolate codebases so each session works on its own branch
-3. A simple TUI interface for easy navigation and management
+3. A native GUI with embedded terminal panes for viewing and interacting with sessions
 
 ### License
 
