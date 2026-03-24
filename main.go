@@ -1,7 +1,6 @@
 package main
 
 import (
-	"claude-squad/app"
 	cmd2 "claude-squad/cmd"
 	"claude-squad/config"
 	"claude-squad/daemon"
@@ -10,7 +9,6 @@ import (
 	"claude-squad/session"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
-	"context"
 	"encoding/json"
 	"fmt"
 	"path/filepath"
@@ -27,7 +25,6 @@ var (
 		Use:   "claude-squad",
 		Short: "Claude Squad - Manage multiple AI agents like Claude Code, Aider, Codex, and Amp.",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := context.Background()
 			log.Initialize(daemonFlag)
 			defer log.Close()
 
@@ -38,7 +35,6 @@ var (
 				return err
 			}
 
-			// Check if we're in a git repository
 			currentDir, err := filepath.Abs(".")
 			if err != nil {
 				return fmt.Errorf("failed to get current directory: %w", err)
@@ -50,29 +46,16 @@ var (
 
 			cfg := config.LoadConfig()
 
-			// Program flag overrides config
 			program := cfg.GetProgram()
 			if programFlag != "" {
 				program = programFlag
 			}
-			// AutoYes flag overrides config
 			autoYes := cfg.AutoYes
 			if autoYesFlag {
 				autoYes = true
 			}
-			if autoYes {
-				defer func() {
-					if err := daemon.LaunchDaemon(); err != nil {
-						log.ErrorLog.Printf("failed to launch daemon: %v", err)
-					}
-				}()
-			}
-			// Kill any daemon that's running.
-			if err := daemon.StopDaemon(); err != nil {
-				log.ErrorLog.Printf("failed to stop daemon: %v", err)
-			}
 
-			return app.Run(ctx, program, autoYes)
+			return gui.Run(program, autoYes)
 		},
 	}
 
@@ -143,35 +126,6 @@ var (
 		},
 	}
 
-	guiCmd = &cobra.Command{
-		Use:   "gui",
-		Short: "Launch the Claude Squad GUI",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			log.Initialize(false)
-			defer log.Close()
-
-			currentDir, err := filepath.Abs(".")
-			if err != nil {
-				return fmt.Errorf("failed to get current directory: %w", err)
-			}
-
-			if !git.IsGitRepo(currentDir) {
-				return fmt.Errorf("error: claude-squad must be run from within a git repository")
-			}
-
-			cfg := config.LoadConfig()
-			program := cfg.GetProgram()
-			if programFlag != "" {
-				program = programFlag
-			}
-			autoYes := cfg.AutoYes
-			if autoYesFlag {
-				autoYes = true
-			}
-
-			return gui.Run(program, autoYes)
-		},
-	}
 )
 
 func init() {
@@ -191,7 +145,6 @@ func init() {
 	rootCmd.AddCommand(debugCmd)
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.AddCommand(resetCmd)
-	rootCmd.AddCommand(guiCmd)
 }
 
 func main() {
