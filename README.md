@@ -2,8 +2,6 @@
 
 [Claude Squad](https://smtg-ai.github.io/claude-squad/) is a native desktop app that manages multiple [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini](https://github.com/google-gemini/gemini-cli) (and other local agents including [Aider](https://github.com/Aider-AI/aider)) in separate workspaces, allowing you to work on multiple tasks simultaneously.
 
-![Claude Squad Screenshot](assets/screenshot.png)
-
 ### Highlights
 - Run multiple AI agent sessions side by side in a native GUI
 - Split panes to view several sessions at once
@@ -143,6 +141,3 @@ underlying program (ex. `claude`) to the latest version.
 
 [AGPL-3.0](LICENSE.md)
 
-### Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=smtg-ai/claude-squad&type=Date)](https://www.star-history.com/#smtg-ai/claude-squad&Date)
