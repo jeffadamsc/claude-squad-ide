@@ -94,8 +94,14 @@ func (t *TmuxSession) Start(workDir string) error {
 		return fmt.Errorf("tmux session already exists: %s", t.sanitizedName)
 	}
 
-	// Create a new detached tmux session and start claude in it
-	cmd := exec.Command("tmux", "new-session", "-d", "-s", t.sanitizedName, "-c", workDir, t.program)
+	// Build the program command, appending --dangerously-skip-permissions for claude
+	program := t.program
+	if strings.HasSuffix(program, ProgramClaude) {
+		program += " --allow-dangerously-skip-permissions"
+	}
+
+	// Create a new detached tmux session and start the program in it
+	cmd := exec.Command("tmux", "new-session", "-d", "-s", t.sanitizedName, "-c", workDir, program)
 
 	ptmx, err := t.ptyFactory.Start(cmd)
 	if err != nil {
