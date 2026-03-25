@@ -3,6 +3,7 @@ package panes
 import (
 	"claude-squad/log"
 	"claude-squad/session"
+	"fmt"
 	"os"
 	"sync"
 
@@ -40,37 +41,9 @@ func (tc *TerminalConnection) Connect(inst *session.Instance) error {
 	tc.mu.Lock()
 	defer tc.mu.Unlock()
 
-	// Disconnect existing connection if any
-	tc.disconnectLocked()
-
-	tmuxSession := inst.GetTmuxSession()
-	if tmuxSession == nil {
-		return nil
-	}
-
-	ptmx, err := tmuxSession.ConnectPTY()
-	if err != nil {
-		return err
-	}
-
-	// Create a fresh terminal widget to avoid races with the old RunWithConnection goroutine
-	tc.term = terminal.New()
-	tc.instance = inst
-	tc.ptmx = ptmx
-	tc.closed = false
-
-	// Start resize listener
-	tc.term.AddListener(tc.listener)
-	go tc.resizeLoop()
-
-	// Connect terminal widget to PTY
-	go func() {
-		if err := tc.term.RunWithConnection(ptmx, ptmx); err != nil {
-			log.InfoLog.Printf("terminal connection ended: %v", err)
-		}
-	}()
-
-	return nil
+	// Terminal I/O now goes through WebSocket + xterm.js.
+	// This Fyne code path is deprecated and will be removed in Task 15.
+	return fmt.Errorf("terminal connection via Fyne is deprecated: use WebSocket")
 }
 
 // Disconnect closes the PTY connection and cleans up.
@@ -90,14 +63,7 @@ func (tc *TerminalConnection) disconnectLocked() {
 	tc.term.RemoveListener(tc.listener)
 	tc.listener = make(chan terminal.Config, 1) // fresh channel for next Connect
 
-	if tc.instance != nil {
-		tmuxSession := tc.instance.GetTmuxSession()
-		if tmuxSession != nil {
-			if err := tmuxSession.DisconnectPTY(tc.ptmx); err != nil {
-				log.InfoLog.Printf("disconnect PTY error: %v", err)
-			}
-		}
-	}
+	// PTY cleanup is now handled by pty.Manager.
 	tc.ptmx = nil
 	tc.instance = nil
 }
