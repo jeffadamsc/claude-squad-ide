@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import type { CreateOptions, DirInfo } from "../../lib/wails";
 import { api } from "../../lib/wails";
+import { AddHostDialog } from "./AddHostDialog";
+import { useSessionStore } from "../../store/sessionStore";
 
 interface NewSessionDialogProps {
   onSubmit: (opts: CreateOptions) => void;
@@ -15,6 +17,10 @@ export function NewSessionDialog({
   profiles,
   defaultWorkDir,
 }: NewSessionDialogProps) {
+  const hosts = useSessionStore((s) => s.hosts);
+  const addHost = useSessionStore((s) => s.addHost);
+  const [selectedHostId, setSelectedHostId] = useState("");
+  const [showAddHost, setShowAddHost] = useState(false);
   const [title, setTitle] = useState("");
   const [path, setPath] = useState(defaultWorkDir);
   const [program, setProgram] = useState(profiles[0]?.Program ?? "claude");
@@ -34,10 +40,11 @@ export function NewSessionDialog({
     if (!dir.trim()) return;
     setLoadingBranches(true);
     try {
-      const info: DirInfo = await api().GetDirInfo(dir);
+      const info: DirInfo = selectedHostId
+        ? await api().GetRemoteDirInfo(selectedHostId, dir)
+        : await api().GetDirInfo(dir);
       setDefaultBranch(info.defaultBranch);
       setBranches(info.branches);
-      // Default to origin/<defaultBranch> if available, otherwise new branch
       const originDefault = info.branches.find(
         (b) => b === `origin/${info.defaultBranch}`
       );
@@ -47,7 +54,7 @@ export function NewSessionDialog({
     } finally {
       setLoadingBranches(false);
     }
-  }, []);
+  }, [selectedHostId]);
 
   useEffect(() => {
     loadDirInfo(path);
@@ -60,14 +67,16 @@ export function NewSessionDialog({
       if (searchTimeout.current) clearTimeout(searchTimeout.current);
       searchTimeout.current = setTimeout(async () => {
         try {
-          const results = await api().SearchBranches(path, filter);
+          const results = selectedHostId
+            ? await api().SearchRemoteBranches(selectedHostId, path, filter)
+            : await api().SearchBranches(path, filter);
           setBranches(results);
         } catch {
           // ignore
         }
       }, 200);
     },
-    [path]
+    [path, selectedHostId]
   );
 
   const inputStyle: React.CSSProperties = {
@@ -125,6 +134,36 @@ export function NewSessionDialog({
           placeholder="fix-auth-bug"
           autoFocus
         />
+
+        <label style={labelStyle}>Host</label>
+        <div style={{ display: "flex", gap: 8 }}>
+          <select
+            style={{ ...inputStyle, flex: 1, cursor: "pointer" }}
+            value={selectedHostId}
+            onChange={(e) => setSelectedHostId(e.target.value)}
+          >
+            <option value="">localhost</option>
+            {hosts.map((h) => (
+              <option key={h.id} value={h.id}>{h.name} ({h.host})</option>
+            ))}
+          </select>
+          <button
+            onClick={() => setShowAddHost(true)}
+            style={{
+              padding: "8px 12px",
+              background: "var(--surface0)",
+              color: "var(--text)",
+              border: "none",
+              borderRadius: 4,
+              cursor: "pointer",
+              fontSize: 16,
+              lineHeight: 1,
+            }}
+            title="Add SSH host"
+          >
+            +
+          </button>
+        </div>
 
         <label style={labelStyle}>Directory</label>
         <input
@@ -227,6 +266,7 @@ export function NewSessionDialog({
                 branch: inPlace ? undefined : branch || undefined,
                 inPlace,
                 prompt: prompt.trim() || undefined,
+                hostId: selectedHostId || undefined,
               })
             }
             disabled={!title.trim()}
@@ -244,6 +284,23 @@ export function NewSessionDialog({
           </button>
         </div>
       </div>
+
+      {showAddHost && (
+        <AddHostDialog
+          program={program}
+          onCancel={() => setShowAddHost(false)}
+          onSubmit={async (opts) => {
+            try {
+              const host = await api().CreateHost(opts);
+              addHost(host);
+              setSelectedHostId(host.id);
+              setShowAddHost(false);
+            } catch (e: any) {
+              console.error("Failed to create host:", e);
+            }
+          }}
+        />
+      )}
     </div>
   );
 }
