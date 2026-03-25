@@ -62,9 +62,10 @@ type Pane struct {
 // optional focusable widget (the terminal) so typing still works.
 type tapOverlay struct {
 	widget.BaseWidget
-	onTap     func()
-	focusable fyne.Focusable // set when a terminal is connected
-	canvas    fyne.Canvas
+	onTap          func()
+	onSecondaryTap func(*fyne.PointEvent)
+	focusable      fyne.Focusable // set when a terminal is connected
+	canvas         fyne.Canvas
 }
 
 func newTapOverlay(c fyne.Canvas, onTap func()) *tapOverlay {
@@ -79,6 +80,12 @@ func (t *tapOverlay) Tapped(_ *fyne.PointEvent) {
 	}
 	if t.focusable != nil && t.canvas != nil {
 		t.canvas.Focus(t.focusable)
+	}
+}
+
+func (t *tapOverlay) SecondaryTapped(ev *fyne.PointEvent) {
+	if t.onSecondaryTap != nil {
+		t.onSecondaryTap(ev)
 	}
 }
 
@@ -123,6 +130,13 @@ func NewPane(onFocus func(*Pane), registerKeys ShortcutRegistrar, actions PaneAc
 			p.onFocus(p)
 		}
 	})
+	p.overlay.onSecondaryTap = func(ev *fyne.PointEvent) {
+		// Focus this pane first so split/pause/kill act on the correct pane
+		if p.onFocus != nil {
+			p.onFocus(p)
+		}
+		p.showContextMenu(ev)
+	}
 
 	emptyLabel := widget.NewLabel("Select a session to open here")
 	emptyLabel.Alignment = fyne.TextAlignCenter
@@ -232,6 +246,70 @@ func (p *Pane) UpdateStatus() {
 // Disconnect cleans up the terminal connection.
 func (p *Pane) Disconnect() {
 	p.conn.Disconnect()
+}
+
+func (p *Pane) showContextMenu(ev *fyne.PointEvent) {
+	term := p.conn.Terminal()
+	inst := p.conn.Instance()
+
+	copyItem := fyne.NewMenuItem("Copy", func() {
+		if term != nil {
+			term.CopySelectedText(fyne.CurrentApp().Clipboard())
+		}
+	})
+	if term == nil || !term.HasSelectedText() {
+		copyItem.Disabled = true
+	}
+
+	pasteItem := fyne.NewMenuItem("Paste", func() {
+		if term != nil {
+			term.PasteText(fyne.CurrentApp().Clipboard())
+		}
+	})
+
+	splitHItem := fyne.NewMenuItem("Split Horizontal", func() {
+		if p.actions.SplitHorizontal != nil {
+			p.actions.SplitHorizontal()
+		}
+	})
+
+	splitVItem := fyne.NewMenuItem("Split Vertical", func() {
+		if p.actions.SplitVertical != nil {
+			p.actions.SplitVertical()
+		}
+	})
+
+	pauseItem := fyne.NewMenuItem("Pause Session", func() {
+		if inst != nil && p.actions.PauseSession != nil {
+			p.actions.PauseSession(inst)
+		}
+	})
+	if inst == nil {
+		pauseItem.Disabled = true
+	}
+
+	killItem := fyne.NewMenuItem("Kill Session", func() {
+		if inst != nil && p.actions.KillSession != nil {
+			p.actions.KillSession(inst)
+		}
+	})
+	if inst == nil {
+		killItem.Disabled = true
+	}
+
+	menu := fyne.NewMenu("",
+		copyItem,
+		pasteItem,
+		fyne.NewMenuItemSeparator(),
+		splitHItem,
+		splitVItem,
+		fyne.NewMenuItemSeparator(),
+		pauseItem,
+		killItem,
+	)
+
+	popUp := widget.NewPopUpMenu(menu, p.canvas)
+	popUp.ShowAtPosition(ev.AbsolutePosition)
 }
 
 func hintText() string {
