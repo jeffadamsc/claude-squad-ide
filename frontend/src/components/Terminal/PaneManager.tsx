@@ -34,6 +34,7 @@ export function PaneManager({ wsPort }: PaneManagerProps) {
         sessionId={activeTab.ptyId}
         wsPort={wsPort}
         focused={true}
+        instanceId={activeTab.sessionId}
       />
     </div>
   );

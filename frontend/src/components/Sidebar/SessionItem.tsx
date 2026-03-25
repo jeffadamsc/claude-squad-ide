@@ -26,7 +26,8 @@ export function SessionItem({
   onClick,
   onContextMenu,
 }: SessionItemProps) {
-  const color = statusColors[status?.status ?? session.status] ?? "var(--overlay0)";
+  const sshDisconnected = status?.sshConnected === false;
+  const color = sshDisconnected ? "var(--red)" : (statusColors[status?.status ?? session.status] ?? "var(--overlay0)");
   const diff = status?.diffStats;
 
   let background = selected ? "var(--surface0)" : "transparent";
@@ -50,7 +51,7 @@ export function SessionItem({
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ color, fontSize: 10 }}>
-          {loading ? "\u23F3" : session.status === "paused" ? "\u23F8" : "\u25CF"}
+          {loading ? "\u23F3" : sshDisconnected ? "\u26A0" : session.status === "paused" ? "\u23F8" : "\u25CF"}
         </span>
         <span
           style={{
