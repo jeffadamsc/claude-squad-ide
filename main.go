@@ -1,23 +1,33 @@
 package main
 
 import (
+	"context"
+	"embed"
+	"encoding/json"
+	"fmt"
+	"io/fs"
+	"path/filepath"
+
+	appPkg "claude-squad/app"
 	cmd2 "claude-squad/cmd"
 	"claude-squad/config"
 	"claude-squad/daemon"
-	"claude-squad/gui"
 	"claude-squad/log"
 	"claude-squad/session"
 	"claude-squad/session/git"
 	"claude-squad/session/tmux"
-	"encoding/json"
-	"fmt"
-	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/wailsapp/wails/v2"
+	"github.com/wailsapp/wails/v2/pkg/options"
+	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 )
 
+//go:embed all:frontend/dist
+var assets embed.FS
+
 var (
-	version     = "1.0.17"
+	version     = "2.0.0"
 	programFlag string
 	autoYesFlag bool
 	daemonFlag  bool
@@ -55,7 +65,29 @@ var (
 				autoYes = true
 			}
 
-			return gui.Run(program, autoYes)
+			// Suppress unused variable warnings until these are wired into SessionAPI options.
+			_ = program
+			_ = autoYes
+
+			api, err := appPkg.NewSessionAPI(appPkg.SessionAPIOptions{})
+			if err != nil {
+				return fmt.Errorf("failed to create session API: %w", err)
+			}
+
+			return wails.Run(&options.App{
+				Title:  "Claude Squad",
+				Width:  1200,
+				Height: 800,
+				AssetServer: &assetserver.Options{
+					Assets: assets,
+				},
+				Bind: []interface{}{
+					api,
+				},
+				OnShutdown: func(ctx context.Context) {
+					api.Close()
+				},
+			})
 		},
 	}
 
@@ -125,7 +157,6 @@ var (
 			fmt.Printf("https://github.com/smtg-ai/claude-squad/releases/tag/v%s\n", version)
 		},
 	}
-
 )
 
 func init() {
@@ -152,3 +183,6 @@ func main() {
 		fmt.Println(err)
 	}
 }
+
+// Ensure io/fs is used (embed.FS implements fs.FS).
+var _ fs.FS = assets
