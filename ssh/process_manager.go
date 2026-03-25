@@ -207,3 +207,21 @@ func (m *SSHProcessManager) Get(id string) pty.StreamableSession {
 	}
 	return sess
 }
+
+// DynamicSSHRegistry queries all active SSHProcessManagers via HostManager.
+type DynamicSSHRegistry struct {
+	hm *HostManager
+}
+
+func NewDynamicSSHRegistry(hm *HostManager) *DynamicSSHRegistry {
+	return &DynamicSSHRegistry{hm: hm}
+}
+
+func (r *DynamicSSHRegistry) Get(id string) pty.StreamableSession {
+	for _, pm := range r.hm.GetAllProcessManagers() {
+		if sess := pm.Get(id); sess != nil {
+			return sess
+		}
+	}
+	return nil
+}

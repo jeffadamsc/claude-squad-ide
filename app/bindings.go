@@ -70,7 +70,15 @@ type SessionAPI struct {
 
 func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 	mgr := ptyPkg.NewManager()
-	ws := ptyPkg.NewWebSocketServer(mgr, mgr)
+
+	configDir, _ := config.GetConfigDir()
+	hostStore := sshPkg.NewHostStore(filepath.Join(configDir, "hosts.json"))
+	keychainStore := sshPkg.NewKeychainStore("com.claude-squad")
+	hostMgr := sshPkg.NewHostManager(hostStore, keychainStore)
+
+	sshRegistry := sshPkg.NewDynamicSSHRegistry(hostMgr)
+	composite := ptyPkg.NewCompositeRegistry(mgr, sshRegistry)
+	ws := ptyPkg.NewWebSocketServer(composite, mgr)
 
 	port, err := ws.ListenAndServe()
 	if err != nil {
@@ -83,11 +91,6 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 	if err != nil {
 		return nil, fmt.Errorf("init storage: %w", err)
 	}
-
-	configDir, _ := config.GetConfigDir()
-	hostStore := sshPkg.NewHostStore(filepath.Join(configDir, "hosts.json"))
-	keychainStore := sshPkg.NewKeychainStore("com.claude-squad")
-	hostMgr := sshPkg.NewHostManager(hostStore, keychainStore)
 
 	api := &SessionAPI{
 		instances:     make(map[string]*session.Instance),

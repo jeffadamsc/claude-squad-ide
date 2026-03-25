@@ -171,6 +171,17 @@ func (hm *HostManager) reconnectLoop(hostID string) {
 	}
 }
 
+// GetAllProcessManagers returns all active SSHProcessManagers for registry lookup.
+func (hm *HostManager) GetAllProcessManagers() []*SSHProcessManager {
+	hm.mu.Lock()
+	defer hm.mu.Unlock()
+	pms := make([]*SSHProcessManager, 0, len(hm.clients))
+	for _, mc := range hm.clients {
+		pms = append(pms, mc.pm)
+	}
+	return pms
+}
+
 // IsConnected returns whether the SSH connection for a host is alive.
 // Read-only — does not create connections or change refcounts.
 func (hm *HostManager) IsConnected(hostID string) bool {
