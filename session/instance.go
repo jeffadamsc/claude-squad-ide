@@ -463,6 +463,7 @@ func (i *Instance) Paused() bool {
 	return i.Status == Paused
 }
 
+
 // TmuxAlive returns true if a process is currently running for this instance.
 func (i *Instance) TmuxAlive() bool {
 	return i.processID != ""
