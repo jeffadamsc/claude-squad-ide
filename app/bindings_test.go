@@ -4,6 +4,8 @@ import (
 	"claude-squad/config"
 	ptyPkg "claude-squad/pty"
 	"claude-squad/session"
+	sshPkg "claude-squad/ssh"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -34,6 +36,39 @@ func TestSessionAPI_GetWebSocketPort(t *testing.T) {
 	assert.Greater(t, port, 0)
 }
 
+func TestCreateSession_WithHostID(t *testing.T) {
+	api := newTestAPI(t)
+
+	_, err := api.CreateSession(CreateOptions{
+		Title:   "remote-test",
+		Path:    "/tmp",
+		Program: "echo",
+		InPlace: true,
+		HostID:  "test-host-123",
+	})
+
+	// Should fail with connection error since no real SSH server
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "remote host")
+}
+
+func TestSessionStatus_SSHConnected(t *testing.T) {
+	api := newTestAPI(t)
+
+	_, err := api.CreateSession(CreateOptions{
+		Title:   "local-test",
+		Path:    "/tmp",
+		Program: "echo hello",
+		InPlace: true,
+	})
+	require.NoError(t, err)
+
+	statuses, err := api.PollAllStatuses()
+	require.NoError(t, err)
+	require.Len(t, statuses, 1)
+	assert.Nil(t, statuses[0].SSHConnected) // nil for local sessions
+}
+
 // newTestAPI creates a SessionAPI with isolated storage (empty state).
 func newTestAPI(t *testing.T) *SessionAPI {
 	t.Helper()
@@ -50,13 +85,21 @@ func newTestAPI(t *testing.T) *SessionAPI {
 
 	cfg := config.LoadConfig()
 
+	tmpDir := t.TempDir()
+	hostStore := sshPkg.NewHostStore(filepath.Join(tmpDir, "hosts.json"))
+	keychainStore := sshPkg.NewKeychainStore("com.claude-squad.test")
+	hostMgr := sshPkg.NewHostManager(hostStore, keychainStore)
+
 	api := &SessionAPI{
-		instances:  make(map[string]*session.Instance),
-		storage:    storage,
-		ptyManager: mgr,
-		wsServer:   ws,
-		wsPort:     port,
-		cfg:        cfg,
+		instances:     make(map[string]*session.Instance),
+		storage:       storage,
+		ptyManager:    mgr,
+		wsServer:      ws,
+		wsPort:        port,
+		cfg:           cfg,
+		hostManager:   hostMgr,
+		hostStore:     hostStore,
+		keychainStore: keychainStore,
 	}
 	t.Cleanup(func() { api.Close() })
 	return api
