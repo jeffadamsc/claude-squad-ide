@@ -1,8 +1,10 @@
 package app
 
 import (
+	"crypto/rand"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"claude-squad/config"
@@ -468,6 +470,184 @@ func (api *SessionAPI) Close() {
 	if api.hostManager != nil {
 		api.hostManager.Close()
 	}
+}
+
+// --- Host API Methods ---
+
+type HostInfo struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	User       string `json:"user"`
+	AuthMethod string `json:"authMethod"`
+	KeyPath    string `json:"keyPath"`
+}
+
+type CreateHostOptions struct {
+	Name       string `json:"name"`
+	Host       string `json:"host"`
+	Port       int    `json:"port"`
+	User       string `json:"user"`
+	AuthMethod string `json:"authMethod"`
+	KeyPath    string `json:"keyPath"`
+	Secret     string `json:"secret"` // password or passphrase — stored in keychain, not persisted
+}
+
+type TestHostResult struct {
+	ConnectionOK bool   `json:"connectionOK"`
+	ProgramOK    bool   `json:"programOK"`
+	Message      string `json:"message"`
+}
+
+func (api *SessionAPI) GetHosts() ([]HostInfo, error) {
+	hosts, err := api.hostStore.LoadAll()
+	if err != nil {
+		return nil, err
+	}
+	result := make([]HostInfo, len(hosts))
+	for i, h := range hosts {
+		result[i] = HostInfo{
+			ID: h.ID, Name: h.Name, Host: h.Host,
+			Port: h.Port, User: h.User, AuthMethod: h.AuthMethod,
+			KeyPath: h.KeyPath,
+		}
+	}
+	return result, nil
+}
+
+func (api *SessionAPI) CreateHost(opts CreateHostOptions) (*HostInfo, error) {
+	id := generateAppUUID()
+	config := sshPkg.HostConfig{
+		ID: id, Name: opts.Name, Host: opts.Host,
+		Port: opts.Port, User: opts.User, AuthMethod: opts.AuthMethod,
+		KeyPath: opts.KeyPath,
+	}
+	if err := api.hostStore.Save(config); err != nil {
+		return nil, err
+	}
+	if opts.Secret != "" {
+		if err := api.keychainStore.Set(id, opts.Secret); err != nil {
+			_ = api.hostStore.Delete(id)
+			return nil, fmt.Errorf("store secret: %w", err)
+		}
+	}
+	info := HostInfo{
+		ID: id, Name: opts.Name, Host: opts.Host,
+		Port: opts.Port, User: opts.User, AuthMethod: opts.AuthMethod,
+		KeyPath: opts.KeyPath,
+	}
+	return &info, nil
+}
+
+func (api *SessionAPI) UpdateHost(opts CreateHostOptions, id string) error {
+	config := sshPkg.HostConfig{
+		ID: id, Name: opts.Name, Host: opts.Host,
+		Port: opts.Port, User: opts.User, AuthMethod: opts.AuthMethod,
+		KeyPath: opts.KeyPath,
+	}
+	if err := api.hostStore.Update(config); err != nil {
+		return err
+	}
+	if opts.Secret != "" {
+		if err := api.keychainStore.Set(id, opts.Secret); err != nil {
+			return fmt.Errorf("update secret: %w", err)
+		}
+	}
+	return nil
+}
+
+func (api *SessionAPI) DeleteHost(id string) error {
+	api.mu.RLock()
+	for _, inst := range api.instances {
+		if inst.HostID == id && inst.Status != session.Paused {
+			api.mu.RUnlock()
+			return fmt.Errorf("host has active sessions — pause them first")
+		}
+	}
+	api.mu.RUnlock()
+
+	_ = api.keychainStore.Delete(id)
+	return api.hostStore.Delete(id)
+}
+
+func (api *SessionAPI) TestHost(opts CreateHostOptions, program string) (*TestHostResult, error) {
+	config := sshPkg.HostConfig{
+		Host: opts.Host, Port: opts.Port, User: opts.User,
+		AuthMethod: opts.AuthMethod, KeyPath: opts.KeyPath,
+	}
+	connOK, progOK, msg := sshPkg.TestConnection(config, opts.Secret, program)
+	return &TestHostResult{
+		ConnectionOK: connOK,
+		ProgramOK:    progOK,
+		Message:      msg,
+	}, nil
+}
+
+func (api *SessionAPI) GetRemoteDirInfo(hostID string, dir string) (*DirInfo, error) {
+	client, err := api.hostManager.GetClient(hostID)
+	if err != nil {
+		return &DirInfo{DefaultBranch: "main", Branches: []string{}}, nil
+	}
+	defer api.hostManager.ReleaseClient(hostID)
+
+	out, err := client.RunCommand(fmt.Sprintf("cd %s && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'", shellEscape(dir)))
+	defaultBranch := "main"
+	if err == nil {
+		if b := strings.TrimSpace(out); b != "" {
+			defaultBranch = b
+		}
+	}
+
+	out, err = client.RunCommand(fmt.Sprintf("cd %s && git branch -a --sort=-committerdate --format='%%(refname:short)' 2>/dev/null | head -100", shellEscape(dir)))
+	branches := []string{}
+	if err == nil {
+		for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+			if line != "" {
+				branches = append(branches, line)
+			}
+		}
+	}
+
+	return &DirInfo{DefaultBranch: defaultBranch, Branches: branches}, nil
+}
+
+func (api *SessionAPI) SearchRemoteBranches(hostID string, dir string, filter string) ([]string, error) {
+	client, err := api.hostManager.GetClient(hostID)
+	if err != nil {
+		return []string{}, nil
+	}
+	defer api.hostManager.ReleaseClient(hostID)
+
+	cmd := fmt.Sprintf("cd %s && git branch -a --sort=-committerdate --format='%%(refname:short)' 2>/dev/null", shellEscape(dir))
+	if filter != "" {
+		cmd += fmt.Sprintf(" | grep -i %s", shellEscape(filter))
+	}
+	cmd += " | head -100"
+
+	out, err := client.RunCommand(cmd)
+	if err != nil {
+		return []string{}, nil
+	}
+	branches := []string{}
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line != "" {
+			branches = append(branches, line)
+		}
+	}
+	return branches, nil
+}
+
+func shellEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+func generateAppUUID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40
+	b[8] = (b[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // saveInstancesLocked persists all instances to disk. Must be called with api.mu held.
