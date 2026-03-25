@@ -8,6 +8,7 @@ import (
 	"claude-squad/log"
 	ptyPkg "claude-squad/pty"
 	"claude-squad/session"
+	"claude-squad/session/git"
 )
 
 type SessionAPIOptions struct {
@@ -21,6 +22,7 @@ type CreateOptions struct {
 	Branch  string `json:"branch"`
 	AutoYes bool   `json:"autoYes"`
 	InPlace bool   `json:"inPlace"`
+	Prompt  string `json:"prompt"`
 }
 
 type SessionInfo struct {
@@ -150,6 +152,7 @@ func (api *SessionAPI) CreateSession(opts CreateOptions) (*SessionInfo, error) {
 		AutoYes:        opts.AutoYes,
 		Branch:         opts.Branch,
 		InPlace:        opts.InPlace,
+		Prompt:         opts.Prompt,
 		ProcessManager: api.ptyManager,
 	})
 	if err != nil {
@@ -164,25 +167,67 @@ func (api *SessionAPI) CreateSession(opts CreateOptions) (*SessionInfo, error) {
 	return &info, nil
 }
 
-func (api *SessionAPI) StartSession(id string) error {
+// OpenSession ensures the session has a running process and returns the PTY
+// session ID for WebSocket connection. Resumes paused sessions automatically.
+func (api *SessionAPI) OpenSession(id string) (string, error) {
+	log.InfoLog.Printf("OpenSession called for id=%q", id)
+
 	api.mu.Lock()
 	defer api.mu.Unlock()
 
 	inst, ok := api.instances[id]
 	if !ok {
+		log.ErrorLog.Printf("OpenSession: session %q not found (have %d instances)", id, len(api.instances))
+		return "", fmt.Errorf("session %s not found", id)
+	}
+
+	// Resume paused sessions
+	if inst.Paused() {
+		log.InfoLog.Printf("OpenSession: resuming paused session %q", id)
+		if err := inst.Resume(); err != nil {
+			log.ErrorLog.Printf("OpenSession: resume failed for %q: %v", id, err)
+			return "", fmt.Errorf("resume session: %w", err)
+		}
+		api.dirty = true
+		api.saveInstancesLocked()
+	}
+
+	// Return the PTY process ID for WebSocket routing
+	ptyID := inst.GetProcessID()
+	if ptyID == "" {
+		log.ErrorLog.Printf("OpenSession: session %q has no running process", id)
+		return "", fmt.Errorf("session %s has no running process", id)
+	}
+
+	log.InfoLog.Printf("OpenSession: returning ptyID=%q for session %q", ptyID, id)
+	return ptyID, nil
+}
+
+func (api *SessionAPI) StartSession(id string) error {
+	api.mu.Lock()
+	inst, ok := api.instances[id]
+	if !ok {
+		api.mu.Unlock()
 		return fmt.Errorf("session %s not found", id)
 	}
-
 	if inst.Started() {
+		api.mu.Unlock()
 		return nil
 	}
+	// Set loading status while holding the lock so the poller can see it
+	inst.SetStatus(session.Loading)
+	api.mu.Unlock()
 
+	// Start is slow (git worktree setup, process spawn) — run without holding the lock
+	// so the status poller can continue to report "loading" state
 	if err := inst.Start(true); err != nil {
 		return fmt.Errorf("start session: %w", err)
 	}
 
+	api.mu.Lock()
 	api.dirty = true
 	api.saveInstancesLocked()
+	api.mu.Unlock()
 	return nil
 }
 
@@ -319,8 +364,49 @@ func (api *SessionAPI) GetWebSocketPort() int {
 	return api.wsPort
 }
 
-func (api *SessionAPI) GetConfig() (*config.Config, error) {
-	return api.cfg, nil
+type DirInfo struct {
+	DefaultBranch string   `json:"defaultBranch"`
+	Branches      []string `json:"branches"`
+}
+
+// GetDirInfo returns the default branch and branch list for a directory.
+func (api *SessionAPI) GetDirInfo(dir string) (*DirInfo, error) {
+	defaultBranch := git.GetDefaultBranch(dir)
+	branches, err := git.SearchBranches(dir, "")
+	if err != nil {
+		branches = []string{}
+	}
+	return &DirInfo{
+		DefaultBranch: defaultBranch,
+		Branches:      branches,
+	}, nil
+}
+
+// SearchBranches searches for branches matching a filter in a directory.
+func (api *SessionAPI) SearchBranches(dir string, filter string) ([]string, error) {
+	branches, err := git.SearchBranches(dir, filter)
+	if err != nil {
+		return []string{}, nil
+	}
+	return branches, nil
+}
+
+type AppConfig struct {
+	DefaultProgram string           `json:"DefaultProgram"`
+	AutoYes        bool             `json:"AutoYes"`
+	BranchPrefix   string           `json:"BranchPrefix"`
+	Profiles       []config.Profile `json:"Profiles"`
+	DefaultWorkDir string           `json:"DefaultWorkDir"`
+}
+
+func (api *SessionAPI) GetConfig() (*AppConfig, error) {
+	return &AppConfig{
+		DefaultProgram: api.cfg.DefaultProgram,
+		AutoYes:        api.cfg.AutoYes,
+		BranchPrefix:   api.cfg.BranchPrefix,
+		Profiles:       api.cfg.GetProfiles(),
+		DefaultWorkDir: api.cfg.DefaultWorkDir,
+	}, nil
 }
 
 func (api *SessionAPI) Close() {

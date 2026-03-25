@@ -4,6 +4,7 @@ import (
 	"claude-squad/log"
 	"claude-squad/pty"
 	"claude-squad/session/git"
+	"crypto/rand"
 	"path/filepath"
 
 	"fmt"
@@ -13,6 +14,14 @@ import (
 
 	"github.com/atotto/clipboard"
 )
+
+func generateUUID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	b[6] = (b[6] & 0x0f) | 0x40 // version 4
+	b[8] = (b[8] & 0x3f) | 0x80 // variant 1
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
+}
 
 type Status int
 
@@ -51,6 +60,8 @@ type Instance struct {
 	AutoYes bool
 	// Prompt is the initial prompt to pass to the instance on startup
 	Prompt string
+	// ClaudeSessionID is the UUID of the claude conversation, used for --resume
+	ClaudeSessionID string
 
 	// DiffStats stores the current git diff statistics
 	diffStats *git.DiffStats
@@ -75,17 +86,18 @@ type Instance struct {
 // ToInstanceData converts an Instance to its serializable form
 func (i *Instance) ToInstanceData() InstanceData {
 	data := InstanceData{
-		Title:     i.Title,
-		Path:      i.Path,
-		Branch:    i.Branch,
-		Status:    i.Status,
-		Height:    i.Height,
-		Width:     i.Width,
-		CreatedAt: i.CreatedAt,
-		UpdatedAt: time.Now(),
-		Program:   i.Program,
-		AutoYes:   i.AutoYes,
-		InPlace:   i.inPlace,
+		Title:           i.Title,
+		Path:            i.Path,
+		Branch:          i.Branch,
+		Status:          i.Status,
+		Height:          i.Height,
+		Width:           i.Width,
+		CreatedAt:       i.CreatedAt,
+		UpdatedAt:       time.Now(),
+		Program:         i.Program,
+		AutoYes:         i.AutoYes,
+		InPlace:         i.inPlace,
+		ClaudeSessionID: i.ClaudeSessionID,
 	}
 
 	// Only include worktree data if gitWorktree is initialized
@@ -117,17 +129,18 @@ func (i *Instance) ToInstanceData() InstanceData {
 // Pass nil if only loading metadata (e.g. for paused sessions).
 func FromInstanceData(data InstanceData, pm ProcessManager) (*Instance, error) {
 	instance := &Instance{
-		Title:          data.Title,
-		Path:           data.Path,
-		Branch:         data.Branch,
-		Status:         data.Status,
-		Height:         data.Height,
-		Width:          data.Width,
-		CreatedAt:      data.CreatedAt,
-		UpdatedAt:      data.UpdatedAt,
-		Program:        data.Program,
-		inPlace:        data.InPlace,
-		processManager: pm,
+		Title:           data.Title,
+		Path:            data.Path,
+		Branch:          data.Branch,
+		Status:          data.Status,
+		Height:          data.Height,
+		Width:           data.Width,
+		CreatedAt:       data.CreatedAt,
+		UpdatedAt:       data.UpdatedAt,
+		Program:         data.Program,
+		inPlace:         data.InPlace,
+		ClaudeSessionID: data.ClaudeSessionID,
+		processManager:  pm,
 		diffStats: &git.DiffStats{
 			Added:   data.DiffStats.Added,
 			Removed: data.DiffStats.Removed,
@@ -173,6 +186,8 @@ type InstanceOptions struct {
 	Branch string
 	// InPlace runs the session directly in the working directory without git isolation.
 	InPlace bool
+	// Prompt is the initial prompt to pass to the instance on startup.
+	Prompt string
 	// ProcessManager manages the terminal process lifecycle.
 	ProcessManager ProcessManager
 }
@@ -195,7 +210,8 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		Width:          0,
 		CreatedAt:      t,
 		UpdatedAt:      t,
-		AutoYes:        false,
+		AutoYes:        opts.AutoYes,
+		Prompt:         opts.Prompt,
 		selectedBranch: opts.Branch,
 		inPlace:        opts.InPlace,
 		processManager: opts.ProcessManager,
@@ -228,7 +244,10 @@ func (i *Instance) IsInPlace() bool {
 
 // spawnProcess spawns the program in processManager using the given working directory.
 // It parses i.Program into command + args and stores the returned process ID.
-func (i *Instance) spawnProcess(dir string) error {
+// If resume is true and the program is claude, --resume is added to resume
+// the conversation. If the resume fails (e.g. conversation not found),
+// the process is killed and retried with a fresh session ID.
+func (i *Instance) spawnProcess(dir string, resume bool) error {
 	if i.processManager == nil {
 		return fmt.Errorf("process manager not set")
 	}
@@ -238,11 +257,42 @@ func (i *Instance) spawnProcess(dir string) error {
 	}
 	program := fields[0]
 	args := fields[1:]
+
+	isClaude := strings.HasSuffix(program, ProgramClaude)
+
+	if isClaude {
+		args = append(args, "--allow-dangerously-skip-permissions")
+		if resume && i.ClaudeSessionID != "" {
+			args = append(args, "--resume", i.ClaudeSessionID)
+		} else if i.ClaudeSessionID == "" {
+			// First start: generate a session ID so we can resume later
+			id := generateUUID()
+			i.ClaudeSessionID = id
+			args = append(args, "--session-id", id)
+		}
+	}
+
 	id, err := i.processManager.Spawn(program, args, pty.SpawnOptions{Dir: dir})
 	if err != nil {
 		return err
 	}
 	i.processID = id
+
+	// If we attempted a resume, check for early exit (conversation not found).
+	if isClaude && resume && i.ClaudeSessionID != "" {
+		if exited := i.processManager.WaitExit(id, 3*time.Second); exited {
+			output := i.processManager.GetContent(id)
+			if strings.Contains(output, "No conversation found") {
+				log.InfoLog.Printf("claude --resume failed (conversation not found), starting fresh session")
+				// Kill the dead process entry.
+				_ = i.processManager.Kill(id)
+				// Clear stale session ID and start fresh.
+				i.ClaudeSessionID = ""
+				return i.spawnProcess(dir, false)
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -319,7 +369,7 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	}
 
 	// Spawn the process.
-	if err := i.spawnProcess(workDir); err != nil {
+	if err := i.spawnProcess(workDir, false); err != nil {
 		if i.gitWorktree != nil && firstTimeSetup {
 			if cleanupErr := i.gitWorktree.Cleanup(); cleanupErr != nil {
 				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
@@ -453,6 +503,11 @@ func (i *Instance) Started() bool {
 	return i.started
 }
 
+// GetProcessID returns the PTY process ID for WebSocket routing.
+func (i *Instance) GetProcessID() string {
+	return i.processID
+}
+
 // SetTitle sets the title of the instance. Returns an error if the instance has started.
 func (i *Instance) SetTitle(title string) error {
 	if i.started {
@@ -567,8 +622,8 @@ func (i *Instance) Resume() error {
 		if i.processManager == nil {
 			return fmt.Errorf("process manager is nil")
 		}
-		if err := i.spawnProcess(i.Path); err != nil {
-			return fmt.Errorf("failed to start new session: %w", err)
+		if err := i.spawnProcess(i.Path, true); err != nil {
+			return fmt.Errorf("failed to resume session: %w", err)
 		}
 		i.SetStatus(Running)
 		return nil
@@ -582,17 +637,23 @@ func (i *Instance) Resume() error {
 		return fmt.Errorf("cannot resume: branch is checked out, please switch to a different branch")
 	}
 
-	// Setup git worktree
-	if err := i.gitWorktree.Setup(); err != nil {
-		log.ErrorLog.Print(err)
-		return fmt.Errorf("failed to setup git worktree: %w", err)
+	// Setup git worktree only if it doesn't already exist on disk
+	wtPath := i.gitWorktree.GetWorktreePath()
+	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+		log.InfoLog.Printf("worktree %s not found, running Setup", wtPath)
+		if err := i.gitWorktree.Setup(); err != nil {
+			log.ErrorLog.Print(err)
+			return fmt.Errorf("failed to setup git worktree: %w", err)
+		}
+	} else {
+		log.InfoLog.Printf("worktree %s already exists, skipping Setup", wtPath)
 	}
 
 	// Spawn a fresh process
 	if i.processManager == nil {
 		return fmt.Errorf("process manager is nil")
 	}
-	if err := i.spawnProcess(i.gitWorktree.GetWorktreePath()); err != nil {
+	if err := i.spawnProcess(i.gitWorktree.GetWorktreePath(), true); err != nil {
 		log.ErrorLog.Print(err)
 		// Cleanup git worktree if process creation fails
 		if cleanupErr := i.gitWorktree.Cleanup(); cleanupErr != nil {

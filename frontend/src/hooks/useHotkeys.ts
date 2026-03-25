@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { useSessionStore } from "../store/sessionStore";
+import { api } from "../lib/wails";
 
 interface HotkeyActions {
   onNewSession: () => void;
@@ -36,7 +37,12 @@ export function useHotkeys(actions: HotkeyActions) {
         case "Enter":
           e.preventDefault();
           if (sessions[selectedIdx]) {
-            openTab(sessions[selectedIdx].id);
+            const session = sessions[selectedIdx];
+            api().OpenSession(session.id).then((ptyId) => {
+              openTab(session.id, ptyId);
+            }).catch((err) => {
+              console.error("Failed to open session:", err);
+            });
           }
           break;
         case "D":

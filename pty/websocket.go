@@ -2,7 +2,6 @@ package pty
 
 import (
 	"encoding/json"
-	"io"
 	"log"
 	"net"
 	"net/http"
@@ -72,23 +71,31 @@ func (ws *WebSocketServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// Replay buffered terminal content so the client sees current state.
+	snapshot := sess.monitor.Content()
+	if len(snapshot) > 0 {
+		if err := conn.WriteMessage(websocket.BinaryMessage, []byte(snapshot)); err != nil {
+			return
+		}
+	}
+
+	// Subscribe to live PTY output.
+	sub := sess.Subscribe()
+	defer sess.Unsubscribe(sub)
+
 	done := make(chan struct{})
+
+	// Forward PTY output to WebSocket.
 	go func() {
 		defer close(done)
-		buf := make([]byte, 32*1024)
-		for {
-			n, err := sess.Read(buf)
-			if n > 0 {
-				if writeErr := conn.WriteMessage(websocket.BinaryMessage, buf[:n]); writeErr != nil {
-					return
-				}
-			}
-			if err != nil {
+		for data := range sub.ch {
+			if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 				return
 			}
 		}
 	}()
 
+	// Forward WebSocket input to PTY.
 	go func() {
 		for {
 			msgType, msg, err := conn.ReadMessage()
@@ -99,13 +106,11 @@ func (ws *WebSocketServer) handleWS(w http.ResponseWriter, r *http.Request) {
 				var rm resizeMsg
 				if json.Unmarshal(msg, &rm) == nil && rm.Type == "resize" {
 					ws.manager.Resize(sessionID, rm.Rows, rm.Cols)
+					continue
 				}
-				continue
 			}
 			if _, err := sess.Write(msg); err != nil {
-				if err == io.ErrClosedPipe {
-					return
-				}
+				return
 			}
 		}
 	}()

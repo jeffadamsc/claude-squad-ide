@@ -17,7 +17,7 @@ export default function App() {
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible);
   const setSessions = useSessionStore((s) => s.setSessions);
   const addSession = useSessionStore((s) => s.addSession);
-  const openTab = useSessionStore((s) => s.openTab);
+  const markLoading = useSessionStore((s) => s.markLoading);
 
   useEffect(() => {
     const init = async () => {
@@ -60,13 +60,17 @@ export default function App() {
       try {
         const session = await api().CreateSession(opts);
         addSession(session);
-        openTab(session.id);
         setShowNewSession(false);
+        // Start the session in the background — poller picks up status changes
+        markLoading(session.id);
+        api().StartSession(session.id).catch((err) => {
+          console.error("Failed to start session:", err);
+        });
       } catch (err) {
         console.error("Failed to create session:", err);
       }
     },
-    [addSession, openTab]
+    [addSession, markLoading]
   );
 
   return (

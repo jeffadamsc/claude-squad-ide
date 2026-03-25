@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { useSessionStore } from "../../store/sessionStore";
 import { SessionItem } from "./SessionItem";
 import { ContextMenu } from "./ContextMenu";
@@ -15,6 +15,11 @@ export function Sidebar({ onNewSession }: SidebarProps) {
   const setSelectedIdx = useSessionStore((s) => s.setSelectedSidebarIdx);
   const openTab = useSessionStore((s) => s.openTab);
   const removeSession = useSessionStore((s) => s.removeSession);
+  const loadingSessionIds = useSessionStore((s) => s.loadingSessionIds);
+  const flashSessionIds = useSessionStore((s) => s.flashSessionIds);
+
+  const [openingSessionId, setOpeningSessionId] = useState<string | null>(null);
+  const openingRef = useRef<Set<string>>(new Set());
 
   const [contextMenu, setContextMenu] = useState<{
     x: number;
@@ -61,9 +66,22 @@ export function Sidebar({ onNewSession }: SidebarProps) {
             session={session}
             status={statuses.get(session.id)}
             selected={idx === selectedIdx}
-            onClick={() => {
+            loading={openingSessionId === session.id || loadingSessionIds.has(session.id)}
+            flash={flashSessionIds.has(session.id)}
+            onClick={async () => {
+              if (openingRef.current.has(session.id)) return;
               setSelectedIdx(idx);
-              openTab(session.id);
+              openingRef.current.add(session.id);
+              setOpeningSessionId(session.id);
+              try {
+                const ptyId = await api().OpenSession(session.id);
+                openTab(session.id, ptyId);
+              } catch (err) {
+                console.error("Failed to open session:", err);
+              } finally {
+                openingRef.current.delete(session.id);
+                setOpeningSessionId(null);
+              }
             }}
             onContextMenu={(e) => handleContextMenu(e, session.id)}
           />
@@ -96,7 +114,14 @@ export function Sidebar({ onNewSession }: SidebarProps) {
           items={[
             {
               label: "Open",
-              onClick: () => openTab(contextSession.id),
+              onClick: async () => {
+                try {
+                  const ptyId = await api().OpenSession(contextSession.id);
+                  openTab(contextSession.id, ptyId);
+                } catch (err) {
+                  console.error("Failed to open session:", err);
+                }
+              },
             },
             {
               label:

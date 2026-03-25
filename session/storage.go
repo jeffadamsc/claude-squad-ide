@@ -20,7 +20,8 @@ type InstanceData struct {
 	AutoYes   bool      `json:"auto_yes"`
 	InPlace   bool      `json:"in_place,omitempty"`
 
-	Program   string          `json:"program"`
+	Program          string          `json:"program"`
+	ClaudeSessionID  string          `json:"claude_session_id,omitempty"`
 	Worktree  GitWorktreeData `json:"worktree"`
 	DiffStats DiffStatsData   `json:"diff_stats"`
 }

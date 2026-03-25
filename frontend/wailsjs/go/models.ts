@@ -1,5 +1,43 @@
 export namespace app {
 	
+	export class AppConfig {
+	    DefaultProgram: string;
+	    AutoYes: boolean;
+	    BranchPrefix: string;
+	    Profiles: config.Profile[];
+	    DefaultWorkDir: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.DefaultProgram = source["DefaultProgram"];
+	        this.AutoYes = source["AutoYes"];
+	        this.BranchPrefix = source["BranchPrefix"];
+	        this.Profiles = this.convertValues(source["Profiles"], config.Profile);
+	        this.DefaultWorkDir = source["DefaultWorkDir"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
 	export class CreateOptions {
 	    title: string;
 	    path: string;
@@ -7,6 +45,7 @@ export namespace app {
 	    branch: string;
 	    autoYes: boolean;
 	    inPlace: boolean;
+	    prompt: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateOptions(source);
@@ -20,6 +59,7 @@ export namespace app {
 	        this.branch = source["branch"];
 	        this.autoYes = source["autoYes"];
 	        this.inPlace = source["inPlace"];
+	        this.prompt = source["prompt"];
 	    }
 	}
 	export class DiffStats {
@@ -34,6 +74,20 @@ export namespace app {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.added = source["added"];
 	        this.removed = source["removed"];
+	    }
+	}
+	export class DirInfo {
+	    defaultBranch: string;
+	    branches: string[];
+	
+	    static createFrom(source: any = {}) {
+	        return new DirInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.defaultBranch = source["defaultBranch"];
+	        this.branches = source["branches"];
 	    }
 	}
 	export class SessionInfo {
@@ -114,46 +168,6 @@ export namespace config {
 	        this.name = source["name"];
 	        this.program = source["program"];
 	    }
-	}
-	export class Config {
-	    default_program: string;
-	    auto_yes: boolean;
-	    daemon_poll_interval: number;
-	    branch_prefix: string;
-	    profiles?: Profile[];
-	    default_work_dir?: string;
-	
-	    static createFrom(source: any = {}) {
-	        return new Config(source);
-	    }
-	
-	    constructor(source: any = {}) {
-	        if ('string' === typeof source) source = JSON.parse(source);
-	        this.default_program = source["default_program"];
-	        this.auto_yes = source["auto_yes"];
-	        this.daemon_poll_interval = source["daemon_poll_interval"];
-	        this.branch_prefix = source["branch_prefix"];
-	        this.profiles = this.convertValues(source["profiles"], Profile);
-	        this.default_work_dir = source["default_work_dir"];
-	    }
-	
-		convertValues(a: any, classs: any, asMap: boolean = false): any {
-		    if (!a) {
-		        return a;
-		    }
-		    if (a.slice && a.map) {
-		        return (a as any[]).map(elem => this.convertValues(elem, classs));
-		    } else if ("object" === typeof a) {
-		        if (asMap) {
-		            for (const key of Object.keys(a)) {
-		                a[key] = new classs(a[key]);
-		            }
-		            return a;
-		        }
-		        return new classs(a);
-		    }
-		    return a;
-		}
 	}
 
 }

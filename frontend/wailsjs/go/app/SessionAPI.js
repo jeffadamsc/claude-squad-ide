@@ -18,6 +18,10 @@ export function GetConfig() {
   return window['go']['app']['SessionAPI']['GetConfig']();
 }
 
+export function GetDirInfo(arg1) {
+  return window['go']['app']['SessionAPI']['GetDirInfo'](arg1);
+}
+
 export function GetSessionStatus(arg1) {
   return window['go']['app']['SessionAPI']['GetSessionStatus'](arg1);
 }
@@ -34,6 +38,10 @@ export function LoadSessions() {
   return window['go']['app']['SessionAPI']['LoadSessions']();
 }
 
+export function OpenSession(arg1) {
+  return window['go']['app']['SessionAPI']['OpenSession'](arg1);
+}
+
 export function PauseSession(arg1) {
   return window['go']['app']['SessionAPI']['PauseSession'](arg1);
 }
@@ -44,6 +52,10 @@ export function PollAllStatuses() {
 
 export function ResumeSession(arg1) {
   return window['go']['app']['SessionAPI']['ResumeSession'](arg1);
+}
+
+export function SearchBranches(arg1, arg2) {
+  return window['go']['app']['SessionAPI']['SearchBranches'](arg1, arg2);
 }
 
 export function SendPrompt(arg1, arg2) {

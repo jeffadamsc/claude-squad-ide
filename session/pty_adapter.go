@@ -2,6 +2,7 @@ package session
 
 import (
 	ptyPkg "claude-squad/pty"
+	"time"
 )
 
 // Program constants for supported AI coding assistants.
@@ -21,4 +22,5 @@ type ProcessManager interface {
 	CheckTrustPrompt(id string) bool
 	GetContent(id string) string
 	Write(id string, data []byte) error
+	WaitExit(id string, timeout time.Duration) bool
 }

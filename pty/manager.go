@@ -2,10 +2,10 @@ package pty
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"sync"
+	"time"
 
 	"github.com/creack/pty"
 )
@@ -17,6 +17,10 @@ type SpawnOptions struct {
 	Cols uint16
 }
 
+type subscriber struct {
+	ch chan []byte
+}
+
 type Session struct {
 	id      string
 	ptmx    *os.File
@@ -24,21 +28,50 @@ type Session struct {
 	mu      sync.Mutex
 	closed  bool
 	monitor *Monitor
-	pipeR   *io.PipeReader
-	pipeW   *io.PipeWriter
+
+	subMu       sync.Mutex
+	subscribers map[*subscriber]struct{}
+
+	// exited is closed when the process exits.
+	exited chan struct{}
 }
 
 func (s *Session) Write(p []byte) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.closed {
-		return 0, io.ErrClosedPipe
+		return 0, fmt.Errorf("session closed")
 	}
 	return s.ptmx.Write(p)
 }
 
-func (s *Session) Read(p []byte) (int, error) {
-	return s.pipeR.Read(p)
+func (s *Session) Subscribe() *subscriber {
+	sub := &subscriber{ch: make(chan []byte, 256)}
+	s.subMu.Lock()
+	s.subscribers[sub] = struct{}{}
+	s.subMu.Unlock()
+	return sub
+}
+
+func (s *Session) Unsubscribe(sub *subscriber) {
+	s.subMu.Lock()
+	delete(s.subscribers, sub)
+	s.subMu.Unlock()
+}
+
+func (s *Session) broadcast(data []byte) {
+	s.subMu.Lock()
+	defer s.subMu.Unlock()
+	for sub := range s.subscribers {
+		// Copy data for each subscriber since slices share backing array
+		cp := make([]byte, len(data))
+		copy(cp, data)
+		select {
+		case sub.ch <- cp:
+		default:
+			// Drop data if subscriber is too slow
+		}
+	}
 }
 
 func (s *Session) Closed() bool {
@@ -54,10 +87,17 @@ func (s *Session) close() {
 		return
 	}
 	s.closed = true
-	s.pipeW.Close()
 	s.ptmx.Close()
 	s.cmd.Process.Kill()
 	s.cmd.Wait()
+
+	// Close all subscriber channels
+	s.subMu.Lock()
+	for sub := range s.subscribers {
+		close(sub.ch)
+		delete(s.subscribers, sub)
+	}
+	s.subMu.Unlock()
 }
 
 type Manager struct {
@@ -98,34 +138,39 @@ func (m *Manager) Spawn(program string, args []string, opts SpawnOptions) (strin
 		return "", fmt.Errorf("pty start: %w", err)
 	}
 
-	pipeR, pipeW := io.Pipe()
 	monitor := NewMonitor(64 * 1024)
 
 	m.mu.Lock()
 	m.counter++
 	id := fmt.Sprintf("session-%d", m.counter)
 	sess := &Session{
-		id:      id,
-		ptmx:    ptmx,
-		cmd:     cmd,
-		monitor: monitor,
-		pipeR:   pipeR,
-		pipeW:   pipeW,
+		id:          id,
+		ptmx:        ptmx,
+		cmd:         cmd,
+		monitor:     monitor,
+		subscribers: make(map[*subscriber]struct{}),
+		exited:      make(chan struct{}),
 	}
 	m.sessions[id] = sess
 	m.mu.Unlock()
 
-	// Tee PTY output to both monitor and pipe (for WebSocket consumers).
+	// Read PTY output, write to monitor and broadcast to subscribers.
 	go func() {
 		buf := make([]byte, 32*1024)
 		for {
 			n, err := ptmx.Read(buf)
 			if n > 0 {
 				sess.monitor.Write(buf[:n])
-				sess.pipeW.Write(buf[:n])
+				sess.broadcast(buf[:n])
 			}
 			if err != nil {
-				sess.pipeW.CloseWithError(err)
+				// Close all subscriber channels on PTY EOF
+				sess.subMu.Lock()
+				for sub := range sess.subscribers {
+					close(sub.ch)
+					delete(sess.subscribers, sub)
+				}
+				sess.subMu.Unlock()
 				return
 			}
 		}
@@ -136,6 +181,7 @@ func (m *Manager) Spawn(program string, args []string, opts SpawnOptions) (strin
 		sess.mu.Lock()
 		sess.closed = true
 		sess.mu.Unlock()
+		close(sess.exited)
 	}()
 
 	return id, nil
@@ -218,6 +264,23 @@ func (m *Manager) CheckTrustPrompt(id string) bool {
 		return false
 	}
 	return sess.monitor.CheckTrustPrompt()
+}
+
+// WaitExit blocks until the process exits or the timeout expires.
+// Returns true if the process exited within the timeout.
+func (m *Manager) WaitExit(id string, timeout time.Duration) bool {
+	m.mu.RLock()
+	sess, ok := m.sessions[id]
+	m.mu.RUnlock()
+	if !ok {
+		return true
+	}
+	select {
+	case <-sess.exited:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }
 
 func (m *Manager) Write(id string, data []byte) error {

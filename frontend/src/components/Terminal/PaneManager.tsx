@@ -30,7 +30,8 @@ export function PaneManager({ wsPort }: PaneManagerProps) {
   return (
     <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
       <TerminalPane
-        sessionId={activeTab.sessionId}
+        key={activeTab.ptyId}
+        sessionId={activeTab.ptyId}
         wsPort={wsPort}
         focused={true}
       />

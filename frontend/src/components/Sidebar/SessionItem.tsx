@@ -4,6 +4,8 @@ interface SessionItemProps {
   session: SessionInfo;
   status?: SessionStatus;
   selected: boolean;
+  loading?: boolean;
+  flash?: boolean;
   onClick: () => void;
   onContextMenu: (e: React.MouseEvent) => void;
 }
@@ -19,11 +21,18 @@ export function SessionItem({
   session,
   status,
   selected,
+  loading,
+  flash,
   onClick,
   onContextMenu,
 }: SessionItemProps) {
   const color = statusColors[status?.status ?? session.status] ?? "var(--overlay0)";
   const diff = status?.diffStats;
+
+  let background = selected ? "var(--surface0)" : "transparent";
+  if (flash) {
+    background = "var(--surface1)";
+  }
 
   return (
     <div
@@ -33,14 +42,15 @@ export function SessionItem({
         padding: "10px",
         marginBottom: 4,
         borderRadius: 6,
-        background: selected ? "var(--surface0)" : "transparent",
+        background,
         borderLeft: selected ? "3px solid var(--blue)" : "3px solid transparent",
         cursor: "pointer",
+        transition: "background 0.4s ease",
       }}
     >
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{ color, fontSize: 10 }}>
-          {session.status === "paused" ? "\u23F8" : "\u25CF"}
+          {loading ? "\u23F3" : session.status === "paused" ? "\u23F8" : "\u25CF"}
         </span>
         <span
           style={{

@@ -4,6 +4,7 @@ import type { SessionInfo, SessionStatus } from "../lib/wails";
 interface Tab {
   id: string;
   sessionId: string;
+  ptyId: string;
   splits: string[];
 }
 
@@ -14,12 +15,18 @@ interface SessionState {
   activeTabId: string | null;
   selectedSidebarIdx: number;
   sidebarVisible: boolean;
+  // Sessions currently being started (show loading indicator)
+  loadingSessionIds: Set<string>;
+  // Sessions that just finished loading (flash briefly)
+  flashSessionIds: Set<string>;
 
   setSessions: (sessions: SessionInfo[]) => void;
   updateStatuses: (statuses: SessionStatus[]) => void;
   addSession: (session: SessionInfo) => void;
   removeSession: (id: string) => void;
-  openTab: (sessionId: string) => void;
+  markLoading: (id: string) => void;
+  clearFlash: (id: string) => void;
+  openTab: (sessionId: string, ptyId: string) => void;
   closeTab: (tabId: string) => void;
   setActiveTab: (tabId: string) => void;
   setSelectedSidebarIdx: (idx: number) => void;
@@ -35,12 +42,37 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   activeTabId: null,
   selectedSidebarIdx: 0,
   sidebarVisible: true,
+  loadingSessionIds: new Set(),
+  flashSessionIds: new Set(),
 
   setSessions: (sessions) => set({ sessions }),
 
   updateStatuses: (statuses) => {
     const map = new Map<string, SessionStatus>();
     statuses.forEach((s) => map.set(s.id, s));
+
+    // Check if any loading sessions have transitioned to running/ready
+    const { loadingSessionIds } = get();
+    if (loadingSessionIds.size > 0) {
+      const newLoading = new Set(loadingSessionIds);
+      const newFlash = new Set(get().flashSessionIds);
+      for (const id of loadingSessionIds) {
+        const status = map.get(id);
+        if (status && status.status !== "loading") {
+          newLoading.delete(id);
+          newFlash.add(id);
+          // Auto-clear flash after 1.5s
+          setTimeout(() => {
+            get().clearFlash(id);
+          }, 1500);
+        }
+      }
+      if (newLoading.size !== loadingSessionIds.size) {
+        set({ statuses: map, loadingSessionIds: newLoading, flashSessionIds: newFlash });
+        return;
+      }
+    }
+
     set({ statuses: map });
   },
 
@@ -53,7 +85,21 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       tabs: state.tabs.filter((t) => t.sessionId !== id),
     })),
 
-  openTab: (sessionId) => {
+  markLoading: (id) =>
+    set((state) => {
+      const next = new Set(state.loadingSessionIds);
+      next.add(id);
+      return { loadingSessionIds: next };
+    }),
+
+  clearFlash: (id) =>
+    set((state) => {
+      const next = new Set(state.flashSessionIds);
+      next.delete(id);
+      return { flashSessionIds: next };
+    }),
+
+  openTab: (sessionId, ptyId) => {
     const { tabs } = get();
     const existing = tabs.find((t) => t.sessionId === sessionId);
     if (existing) {
@@ -61,7 +107,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       return;
     }
     const tabId = `tab-${++tabCounter}`;
-    const tab: Tab = { id: tabId, sessionId, splits: [] };
+    const tab: Tab = { id: tabId, sessionId, ptyId, splits: [] };
     set((state) => ({
       tabs: [...state.tabs, tab],
       activeTabId: tabId,

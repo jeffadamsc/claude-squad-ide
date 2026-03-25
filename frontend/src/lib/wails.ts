@@ -22,6 +22,12 @@ export interface CreateOptions {
   branch?: string;
   autoYes?: boolean;
   inPlace?: boolean;
+  prompt?: string;
+}
+
+export interface DirInfo {
+  defaultBranch: string;
+  branches: string[];
 }
 
 export interface AppConfig {
@@ -40,6 +46,7 @@ declare global {
           CreateSession(opts: CreateOptions): Promise<SessionInfo>;
           LoadSessions(): Promise<SessionInfo[]>;
           DeleteSession(id: string): Promise<void>;
+          OpenSession(id: string): Promise<string>;
           StartSession(id: string): Promise<void>;
           PauseSession(id: string): Promise<void>;
           ResumeSession(id: string): Promise<void>;
@@ -48,6 +55,8 @@ declare global {
           PollAllStatuses(): Promise<SessionStatus[]>;
           GetWebSocketPort(): Promise<number>;
           GetConfig(): Promise<AppConfig>;
+          GetDirInfo(dir: string): Promise<DirInfo>;
+          SearchBranches(dir: string, filter: string): Promise<string[]>;
         };
       };
     };
