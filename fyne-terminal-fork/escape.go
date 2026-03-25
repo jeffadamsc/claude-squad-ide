@@ -40,6 +40,12 @@ func (t *Terminal) handleEscape(code string) {
 		return
 	}
 
+	// Silently consume SGR mouse reports (CSI < Params M/m).
+	// These are sent by tmux when mouse mode is on.
+	if len(code) > 1 && code[0] == '<' {
+		return
+	}
+
 	runes := []rune(code)
 	if esc, ok := escapes[runes[len(code)-1]]; ok {
 		esc(t, code[:len(code)-1])

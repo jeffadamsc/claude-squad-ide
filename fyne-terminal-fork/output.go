@@ -225,7 +225,7 @@ func (t *Terminal) parseEscState(r rune) (shouldContinue bool) {
 
 func (t *Terminal) parseEscape(r rune) {
 	t.state.code += string(r)
-	if (r < '0' || r > '9') && r != ';' && r != '=' && r != '?' && r != '>' {
+	if (r < '0' || r > '9') && r != ';' && r != '=' && r != '?' && r != '>' && r != '<' {
 		code := t.state.code
 		fyne.Do(func() {
 			t.handleEscape(code)
