@@ -53,6 +53,7 @@ type SessionAPI struct {
 	wsServer   *ptyPkg.WebSocketServer
 	wsPort     int
 	cfg        *config.Config
+	dirty      bool // true when instances have been modified and need saving
 }
 
 func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
@@ -87,6 +88,7 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 	if err != nil {
 		log.ErrorLog.Printf("failed to load persisted sessions: %v", err)
 	} else {
+		log.InfoLog.Printf("loaded %d persisted sessions from state.json", len(allData))
 		for _, data := range allData {
 			// Force all loaded sessions to paused state so we don't try to
 			// spawn processes for sessions that were interrupted.
@@ -99,6 +101,7 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 				continue
 			}
 			api.instances[inst.Title] = inst
+			log.InfoLog.Printf("restored session: %s (branch: %s)", inst.Title, inst.Branch)
 		}
 	}
 
@@ -154,6 +157,7 @@ func (api *SessionAPI) CreateSession(opts CreateOptions) (*SessionInfo, error) {
 	}
 
 	api.instances[inst.Title] = inst
+	api.dirty = true
 	api.saveInstancesLocked()
 
 	info := instanceToInfo(inst)
@@ -177,6 +181,7 @@ func (api *SessionAPI) StartSession(id string) error {
 		return fmt.Errorf("start session: %w", err)
 	}
 
+	api.dirty = true
 	api.saveInstancesLocked()
 	return nil
 }
@@ -194,6 +199,7 @@ func (api *SessionAPI) PauseSession(id string) error {
 		return fmt.Errorf("pause session: %w", err)
 	}
 
+	api.dirty = true
 	api.saveInstancesLocked()
 	return nil
 }
@@ -211,6 +217,7 @@ func (api *SessionAPI) ResumeSession(id string) error {
 		return fmt.Errorf("resume session: %w", err)
 	}
 
+	api.dirty = true
 	api.saveInstancesLocked()
 	return nil
 }
@@ -229,6 +236,7 @@ func (api *SessionAPI) KillSession(id string) error {
 	}
 
 	delete(api.instances, id)
+	api.dirty = true
 	api.saveInstancesLocked()
 	return nil
 }
@@ -319,13 +327,17 @@ func (api *SessionAPI) Close() {
 	api.mu.Lock()
 	defer api.mu.Unlock()
 
-	// Save state before closing
+	// Only save state if we actually modified something
 	api.saveInstancesLocked()
 	api.ptyManager.Close()
 }
 
 // saveInstancesLocked persists all instances to disk. Must be called with api.mu held.
+// Only writes if instances have been modified (dirty flag).
 func (api *SessionAPI) saveInstancesLocked() {
+	if !api.dirty {
+		return
+	}
 	instances := make([]*session.Instance, 0, len(api.instances))
 	for _, inst := range api.instances {
 		instances = append(instances, inst)
