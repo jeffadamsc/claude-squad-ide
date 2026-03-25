@@ -169,7 +169,7 @@ func TestDoubleTapped(t *testing.T) {
 			})
 
 			selectedWord := ""
-			if term.hasSelectedText() {
+			if term.HasSelectedText() {
 				selectedWord = term.SelectedText()
 			}
 

@@ -93,7 +93,7 @@ type parseState struct {
 }
 
 func (t *Terminal) handleOutput(buf []byte) []byte {
-	if t.hasSelectedText() {
+	if t.HasSelectedText() {
 		t.clearSelectedText()
 	}
 	if t.state == nil {

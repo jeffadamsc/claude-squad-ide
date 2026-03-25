@@ -62,15 +62,13 @@ func (t *Terminal) SelectedText() string {
 	return widget2.GetTextRange(t.content, t.blockMode, sr, sc, er, ec)
 }
 
-func (t *Terminal) copySelectedText(clipboard fyne.Clipboard) {
-	// copy start and end sel to clipboard and clear the sel style
+func (t *Terminal) CopySelectedText(clipboard fyne.Clipboard) {
 	text := t.SelectedText()
-	fyne.CurrentApp()
 	clipboard.SetContent(text)
 	t.clearSelectedText()
 }
 
-func (t *Terminal) pasteText(clipboard fyne.Clipboard) {
+func (t *Terminal) PasteText(clipboard fyne.Clipboard) {
 	content := clipboard.Content()
 
 	if t.bracketedPasteMode {
@@ -85,6 +83,6 @@ func (t *Terminal) pasteText(clipboard fyne.Clipboard) {
 	_, _ = t.in.Write([]byte(content))
 }
 
-func (t *Terminal) hasSelectedText() bool {
+func (t *Terminal) HasSelectedText() bool {
 	return t.selStart != nil && t.selEnd != nil
 }
