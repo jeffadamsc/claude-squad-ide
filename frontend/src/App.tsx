@@ -22,14 +22,16 @@ export default function App() {
   useEffect(() => {
     const init = async () => {
       try {
-        const [port, cfg, sessions] = await Promise.all([
+        const [port, cfg, sessions, hosts] = await Promise.all([
           api().GetWebSocketPort(),
           api().GetConfig(),
           api().LoadSessions(),
+          api().GetHosts(),
         ]);
         setWsPort(port);
         setConfig(cfg);
         setSessions(sessions);
+        useSessionStore.getState().setHosts(hosts);
       } catch {
         // Wails not ready yet
       }

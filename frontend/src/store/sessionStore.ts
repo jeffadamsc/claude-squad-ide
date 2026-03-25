@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { SessionInfo, SessionStatus } from "../lib/wails";
+import type { SessionInfo, SessionStatus, HostInfo } from "../lib/wails";
 
 interface Tab {
   id: string;
@@ -19,6 +19,8 @@ interface SessionState {
   loadingSessionIds: Set<string>;
   // Sessions that just finished loading (flash briefly)
   flashSessionIds: Set<string>;
+  // SSH hosts
+  hosts: HostInfo[];
 
   setSessions: (sessions: SessionInfo[]) => void;
   updateStatuses: (statuses: SessionStatus[]) => void;
@@ -31,6 +33,9 @@ interface SessionState {
   setActiveTab: (tabId: string) => void;
   setSelectedSidebarIdx: (idx: number) => void;
   toggleSidebar: () => void;
+  setHosts: (hosts: HostInfo[]) => void;
+  addHost: (host: HostInfo) => void;
+  removeHost: (id: string) => void;
 }
 
 let tabCounter = 0;
@@ -44,6 +49,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   sidebarVisible: true,
   loadingSessionIds: new Set(),
   flashSessionIds: new Set(),
+  hosts: [],
 
   setSessions: (sessions) => set({ sessions }),
 
@@ -141,4 +147,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setSelectedSidebarIdx: (idx) => set({ selectedSidebarIdx: idx }),
   toggleSidebar: () =>
     set((state) => ({ sidebarVisible: !state.sidebarVisible })),
+  setHosts: (hosts) => set({ hosts }),
+  addHost: (host) => set((s) => ({ hosts: [...s.hosts, host] })),
+  removeHost: (id) => set((s) => ({ hosts: s.hosts.filter((h) => h.id !== id) })),
 }));

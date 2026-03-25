@@ -5,6 +5,7 @@ export interface SessionInfo {
   branch: string;
   program: string;
   status: "running" | "ready" | "loading" | "paused";
+  hostId?: string;
 }
 
 export interface SessionStatus {
@@ -13,6 +14,7 @@ export interface SessionStatus {
   branch: string;
   diffStats: { added: number; removed: number };
   hasPrompt: boolean;
+  sshConnected?: boolean | null;
 }
 
 export interface CreateOptions {
@@ -23,6 +25,33 @@ export interface CreateOptions {
   autoYes?: boolean;
   inPlace?: boolean;
   prompt?: string;
+  hostId?: string;
+}
+
+export interface HostInfo {
+  id: string;
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  authMethod: string;
+  keyPath: string;
+}
+
+export interface CreateHostOptions {
+  name: string;
+  host: string;
+  port: number;
+  user: string;
+  authMethod: string;
+  keyPath: string;
+  secret: string;
+}
+
+export interface TestHostResult {
+  connectionOK: boolean;
+  programOK: boolean;
+  message: string;
 }
 
 export interface DirInfo {
@@ -57,6 +86,13 @@ declare global {
           GetConfig(): Promise<AppConfig>;
           GetDirInfo(dir: string): Promise<DirInfo>;
           SearchBranches(dir: string, filter: string): Promise<string[]>;
+          GetHosts(): Promise<HostInfo[]>;
+          CreateHost(opts: CreateHostOptions): Promise<HostInfo>;
+          DeleteHost(id: string): Promise<void>;
+          TestHost(opts: CreateHostOptions, program: string): Promise<TestHostResult>;
+          GetRemoteDirInfo(hostId: string, dir: string): Promise<DirInfo>;
+          SearchRemoteBranches(hostId: string, dir: string, filter: string): Promise<string[]>;
+          SelectFile(startDir: string): Promise<string>;
         };
       };
     };
