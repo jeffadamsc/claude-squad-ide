@@ -134,12 +134,20 @@ func (t *Terminal) MinSize() fyne.Size {
 
 // MouseDown handles the down action for desktop mouse events.
 func (t *Terminal) MouseDown(ev *desktop.MouseEvent) {
+	if ev.Button == desktop.MouseButtonSecondary {
+		// Don't auto-copy/clear selection or paste on right-click.
+		// The pane's context menu handles copy/paste actions.
+		// Still forward to onMouseDown so mouse-aware terminal apps
+		// (vim, htop, etc.) receive right-click events via X10/SGR.
+		if t.onMouseDown != nil {
+			t.onMouseDown(2, ev.Modifier, ev.Position)
+		}
+		return
+	}
+
 	if t.HasSelectedText() {
 		t.CopySelectedText(fyne.CurrentApp().Clipboard())
 		t.clearSelectedText()
-	}
-	if ev.Button == desktop.MouseButtonSecondary {
-		t.PasteText(fyne.CurrentApp().Clipboard())
 	}
 
 	if t.onMouseDown == nil {
@@ -148,8 +156,6 @@ func (t *Terminal) MouseDown(ev *desktop.MouseEvent) {
 
 	if ev.Button == desktop.MouseButtonPrimary {
 		t.onMouseDown(1, ev.Modifier, ev.Position)
-	} else if ev.Button == desktop.MouseButtonSecondary {
-		t.onMouseDown(2, ev.Modifier, ev.Position)
 	}
 }
 
