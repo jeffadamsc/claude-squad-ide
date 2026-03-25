@@ -354,5 +354,5 @@ func hintText() string {
 	if runtime.GOOS == "darwin" {
 		mod = "⌘⇧"
 	}
-	return fmt.Sprintf("Split: %s+\\  %s+-  |  Close: %s+W  |  Nav: %s+←→↑↓", mod, mod, mod, mod)
+	return fmt.Sprintf("Split: %s+\\  %s+-  |  Close: %s+W  |  Nav: %s+←→↑↓  |  Scroll: mousewheel or %s+PgUp/Dn", mod, mod, mod, mod, mod)
 }
