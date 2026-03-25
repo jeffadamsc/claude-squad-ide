@@ -17,10 +17,6 @@ type SpawnOptions struct {
 	Cols uint16
 }
 
-type subscriber struct {
-	ch chan []byte
-}
-
 type Session struct {
 	id      string
 	ptmx    *os.File
@@ -30,7 +26,7 @@ type Session struct {
 	monitor *Monitor
 
 	subMu       sync.Mutex
-	subscribers map[*subscriber]struct{}
+	subscribers map[*Subscriber]struct{}
 
 	// exited is closed when the process exits.
 	exited chan struct{}
@@ -45,18 +41,22 @@ func (s *Session) Write(p []byte) (int, error) {
 	return s.ptmx.Write(p)
 }
 
-func (s *Session) Subscribe() *subscriber {
-	sub := &subscriber{ch: make(chan []byte, 256)}
+func (s *Session) Subscribe() *Subscriber {
+	sub := &Subscriber{Ch: make(chan []byte, 256)}
 	s.subMu.Lock()
 	s.subscribers[sub] = struct{}{}
 	s.subMu.Unlock()
 	return sub
 }
 
-func (s *Session) Unsubscribe(sub *subscriber) {
+func (s *Session) Unsubscribe(sub *Subscriber) {
 	s.subMu.Lock()
 	delete(s.subscribers, sub)
 	s.subMu.Unlock()
+}
+
+func (s *Session) GetSnapshot() []byte {
+	return []byte(s.monitor.Content())
 }
 
 func (s *Session) broadcast(data []byte) {
@@ -67,7 +67,7 @@ func (s *Session) broadcast(data []byte) {
 		cp := make([]byte, len(data))
 		copy(cp, data)
 		select {
-		case sub.ch <- cp:
+		case sub.Ch <- cp:
 		default:
 			// Drop data if subscriber is too slow
 		}
@@ -94,7 +94,7 @@ func (s *Session) close() {
 	// Close all subscriber channels
 	s.subMu.Lock()
 	for sub := range s.subscribers {
-		close(sub.ch)
+		close(sub.Ch)
 		delete(s.subscribers, sub)
 	}
 	s.subMu.Unlock()
@@ -148,7 +148,7 @@ func (m *Manager) Spawn(program string, args []string, opts SpawnOptions) (strin
 		ptmx:        ptmx,
 		cmd:         cmd,
 		monitor:     monitor,
-		subscribers: make(map[*subscriber]struct{}),
+		subscribers: make(map[*Subscriber]struct{}),
 		exited:      make(chan struct{}),
 	}
 	m.sessions[id] = sess
@@ -167,7 +167,7 @@ func (m *Manager) Spawn(program string, args []string, opts SpawnOptions) (strin
 				// Close all subscriber channels on PTY EOF
 				sess.subMu.Lock()
 				for sub := range sess.subscribers {
-					close(sub.ch)
+					close(sub.Ch)
 					delete(sess.subscribers, sub)
 				}
 				sess.subMu.Unlock()
@@ -187,10 +187,22 @@ func (m *Manager) Spawn(program string, args []string, opts SpawnOptions) (strin
 	return id, nil
 }
 
-func (m *Manager) Get(id string) *Session {
+// GetSession returns the raw Session pointer for internal use.
+func (m *Manager) GetSession(id string) *Session {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.sessions[id]
+}
+
+// Get implements SessionRegistry, returning a StreamableSession.
+func (m *Manager) Get(id string) StreamableSession {
+	m.mu.RLock()
+	sess := m.sessions[id]
+	m.mu.RUnlock()
+	if sess == nil {
+		return nil
+	}
+	return sess
 }
 
 func (m *Manager) Kill(id string) error {

@@ -39,7 +39,7 @@ func newTestAPI(t *testing.T) *SessionAPI {
 	t.Helper()
 
 	mgr := ptyPkg.NewManager()
-	ws := ptyPkg.NewWebSocketServer(mgr)
+	ws := ptyPkg.NewWebSocketServer(mgr, mgr)
 	port, err := ws.ListenAndServe()
 	require.NoError(t, err)
 

@@ -22,15 +22,22 @@ type resizeMsg struct {
 	Cols uint16 `json:"cols"`
 }
 
-type WebSocketServer struct {
-	manager *Manager
-	mux     *http.ServeMux
+// Resizer can resize terminal sessions.
+type Resizer interface {
+	Resize(id string, rows, cols uint16) error
 }
 
-func NewWebSocketServer(manager *Manager) *WebSocketServer {
+type WebSocketServer struct {
+	registry SessionRegistry
+	resizer  Resizer
+	mux      *http.ServeMux
+}
+
+func NewWebSocketServer(registry SessionRegistry, resizer Resizer) *WebSocketServer {
 	ws := &WebSocketServer{
-		manager: manager,
-		mux:     http.NewServeMux(),
+		registry: registry,
+		resizer:  resizer,
+		mux:      http.NewServeMux(),
 	}
 	ws.mux.HandleFunc("/ws/", ws.handleWS)
 	return ws
@@ -58,7 +65,7 @@ func (ws *WebSocketServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID := parts[0]
 
-	sess := ws.manager.Get(sessionID)
+	sess := ws.registry.Get(sessionID)
 	if sess == nil {
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
@@ -72,30 +79,30 @@ func (ws *WebSocketServer) handleWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	// Replay buffered terminal content so the client sees current state.
-	snapshot := sess.monitor.Content()
+	snapshot := sess.GetSnapshot()
 	if len(snapshot) > 0 {
-		if err := conn.WriteMessage(websocket.BinaryMessage, []byte(snapshot)); err != nil {
+		if err := conn.WriteMessage(websocket.BinaryMessage, snapshot); err != nil {
 			return
 		}
 	}
 
-	// Subscribe to live PTY output.
+	// Subscribe to live output.
 	sub := sess.Subscribe()
 	defer sess.Unsubscribe(sub)
 
 	done := make(chan struct{})
 
-	// Forward PTY output to WebSocket.
+	// Forward output to WebSocket.
 	go func() {
 		defer close(done)
-		for data := range sub.ch {
+		for data := range sub.Ch {
 			if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
 				return
 			}
 		}
 	}()
 
-	// Forward WebSocket input to PTY.
+	// Forward WebSocket input to session.
 	go func() {
 		for {
 			msgType, msg, err := conn.ReadMessage()
@@ -105,7 +112,7 @@ func (ws *WebSocketServer) handleWS(w http.ResponseWriter, r *http.Request) {
 			if msgType == websocket.TextMessage {
 				var rm resizeMsg
 				if json.Unmarshal(msg, &rm) == nil && rm.Type == "resize" {
-					ws.manager.Resize(sessionID, rm.Rows, rm.Cols)
+					ws.resizer.Resize(sessionID, rm.Rows, rm.Cols)
 					continue
 				}
 			}

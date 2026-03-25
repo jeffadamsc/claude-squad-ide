@@ -16,7 +16,7 @@ func TestWebSocketServer_ConnectAndRead(t *testing.T) {
 	mgr := NewManager()
 	defer mgr.Close()
 
-	ws := NewWebSocketServer(mgr)
+	ws := NewWebSocketServer(mgr, mgr)
 	server := httptest.NewServer(ws.Handler())
 	defer server.Close()
 
@@ -47,7 +47,7 @@ func TestWebSocketServer_WriteInput(t *testing.T) {
 	mgr := NewManager()
 	defer mgr.Close()
 
-	ws := NewWebSocketServer(mgr)
+	ws := NewWebSocketServer(mgr, mgr)
 	server := httptest.NewServer(ws.Handler())
 	defer server.Close()
 
@@ -82,7 +82,7 @@ func TestWebSocketServer_InvalidSession(t *testing.T) {
 	mgr := NewManager()
 	defer mgr.Close()
 
-	ws := NewWebSocketServer(mgr)
+	ws := NewWebSocketServer(mgr, mgr)
 	server := httptest.NewServer(ws.Handler())
 	defer server.Close()
 
@@ -98,7 +98,7 @@ func TestWebSocketServer_Resize(t *testing.T) {
 	mgr := NewManager()
 	defer mgr.Close()
 
-	ws := NewWebSocketServer(mgr)
+	ws := NewWebSocketServer(mgr, mgr)
 	server := httptest.NewServer(ws.Handler())
 	defer server.Close()
 

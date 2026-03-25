@@ -60,7 +60,7 @@ type SessionAPI struct {
 
 func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 	mgr := ptyPkg.NewManager()
-	ws := ptyPkg.NewWebSocketServer(mgr)
+	ws := ptyPkg.NewWebSocketServer(mgr, mgr)
 
 	port, err := ws.ListenAndServe()
 	if err != nil {

@@ -17,7 +17,7 @@ func TestIntegration_SpawnAndWebSocket(t *testing.T) {
 	mgr := pty.NewManager()
 	defer mgr.Close()
 
-	ws := pty.NewWebSocketServer(mgr)
+	ws := pty.NewWebSocketServer(mgr, mgr)
 	port, err := ws.ListenAndServe()
 	require.NoError(t, err)
 
