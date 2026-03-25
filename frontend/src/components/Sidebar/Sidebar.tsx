@@ -15,6 +15,7 @@ export function Sidebar({ onNewSession }: SidebarProps) {
   const setSelectedIdx = useSessionStore((s) => s.setSelectedSidebarIdx);
   const openTab = useSessionStore((s) => s.openTab);
   const removeSession = useSessionStore((s) => s.removeSession);
+  const enterScopeMode = useSessionStore((s) => s.enterScopeMode);
   const loadingSessionIds = useSessionStore((s) => s.loadingSessionIds);
   const flashSessionIds = useSessionStore((s) => s.flashSessionIds);
 
@@ -120,6 +121,18 @@ export function Sidebar({ onNewSession }: SidebarProps) {
                   openTab(contextSession.id, ptyId);
                 } catch (err) {
                   console.error("Failed to open session:", err);
+                }
+              },
+            },
+            {
+              label: "Scope Mode",
+              onClick: async () => {
+                try {
+                  const ptyId = await api().OpenSession(contextSession.id);
+                  openTab(contextSession.id, ptyId);
+                  enterScopeMode(contextSession.id);
+                } catch (err) {
+                  console.error("Failed to enter scope mode:", err);
                 }
               },
             },

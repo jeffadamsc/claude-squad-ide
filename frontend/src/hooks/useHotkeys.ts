@@ -57,6 +57,21 @@ export function useHotkeys(actions: HotkeyActions) {
           e.preventDefault();
           actions.onTogglePauseResume();
           break;
+        case "S":
+          e.preventDefault();
+          {
+            const state = useSessionStore.getState();
+            if (state.scopeMode.active) {
+              state.exitScopeMode();
+            } else if (sessions[selectedIdx]) {
+              const s = sessions[selectedIdx];
+              api().OpenSession(s.id).then((ptyId) => {
+                openTab(s.id, ptyId);
+                useSessionStore.getState().enterScopeMode(s.id);
+              }).catch(console.error);
+            }
+          }
+          break;
         case "B":
           e.preventDefault();
           toggleSidebar();

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from "react";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { TabBar } from "./components/TabBar/TabBar";
 import { PaneManager } from "./components/Terminal/PaneManager";
+import { ScopeLayout } from "./components/ScopeMode/ScopeLayout";
 import { StatusBar } from "./components/StatusBar";
 import { NewSessionDialog } from "./components/Dialogs/NewSessionDialog";
 import { useSessionPoller } from "./hooks/useSessionPoller";
@@ -15,6 +16,7 @@ export default function App() {
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [showNewSession, setShowNewSession] = useState(false);
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible);
+  const scopeMode = useSessionStore((s) => s.scopeMode);
   const setSessions = useSessionStore((s) => s.setSessions);
   const addSession = useSessionStore((s) => s.addSession);
   const markLoading = useSessionStore((s) => s.markLoading);
@@ -78,13 +80,19 @@ export default function App() {
   return (
     <div style={{ display: "flex", height: "100vh", flexDirection: "column" }}>
       <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
-        {sidebarVisible && (
-          <Sidebar onNewSession={() => setShowNewSession(true)} />
+        {scopeMode.active ? (
+          <ScopeLayout wsPort={wsPort} />
+        ) : (
+          <>
+            {sidebarVisible && (
+              <Sidebar onNewSession={() => setShowNewSession(true)} />
+            )}
+            <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+              <TabBar />
+              <PaneManager wsPort={wsPort} />
+            </div>
+          </>
         )}
-        <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-          <TabBar />
-          <PaneManager wsPort={wsPort} />
-        </div>
       </div>
       <StatusBar />
 

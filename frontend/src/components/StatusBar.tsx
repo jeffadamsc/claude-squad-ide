@@ -5,6 +5,7 @@ export function StatusBar() {
   const activeTabId = useSessionStore((s) => s.activeTabId);
   const sessions = useSessionStore((s) => s.sessions);
   const statuses = useSessionStore((s) => s.statuses);
+  const scopeMode = useSessionStore((s) => s.scopeMode);
 
   const activeTab = tabs.find((t) => t.id === activeTabId);
   const session = activeTab
@@ -30,7 +31,9 @@ export function StatusBar() {
           : "No session selected"}
       </span>
       <span>
-        Ctrl+Shift+N: New \u00B7 Ctrl+Shift+\: Split \u00B7 Ctrl+Shift+Q: Quit
+        {scopeMode.active
+          ? "Ctrl+Shift+S: Exit Scope"
+          : "Ctrl+Shift+N: New \u00B7 Ctrl+Shift+S: Scope \u00B7 Ctrl+Shift+Q: Quit"}
       </span>
     </div>
   );
