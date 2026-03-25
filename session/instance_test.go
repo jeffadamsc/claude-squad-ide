@@ -60,13 +60,13 @@ func TestInPlacePauseDoesNotPanic(t *testing.T) {
 		inPlace: true,
 		Status:  Running,
 	}
-	// Pause will fail because tmuxSession is nil, but it must NOT panic
+	// Pause will fail because processManager is nil, but it must NOT panic
 	// on nil gitWorktree access
 	err := inst.Pause()
 	if err == nil {
-		t.Error("expected error due to nil tmux session")
+		t.Error("expected error due to nil process manager")
 	}
-	if err.Error() != "tmux session is nil" {
+	if err.Error() != "process manager is nil" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
@@ -77,13 +77,13 @@ func TestInPlaceResumeDoesNotPanic(t *testing.T) {
 		inPlace: true,
 		Status:  Paused,
 	}
-	// Resume will fail because tmuxSession is nil, but it must NOT panic
+	// Resume will fail because processManager is nil, but it must NOT panic
 	// on nil gitWorktree access
 	err := inst.Resume()
 	if err == nil {
-		t.Error("expected error due to nil tmux session")
+		t.Error("expected error due to nil process manager")
 	}
-	if err.Error() != "tmux session is nil" {
+	if err.Error() != "process manager is nil" {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

@@ -2,8 +2,8 @@ package session
 
 import (
 	"claude-squad/log"
+	"claude-squad/pty"
 	"claude-squad/session/git"
-	"claude-squad/session/tmux"
 	"path/filepath"
 
 	"fmt"
@@ -64,8 +64,10 @@ type Instance struct {
 	// The below fields are initialized upon calling Start().
 
 	started bool
-	// tmuxSession is the tmux session for the instance.
-	tmuxSession *tmux.TmuxSession
+	// processManager manages the terminal process lifecycle.
+	processManager ProcessManager
+	// processID is the ID of the running process within processManager.
+	processID string
 	// gitWorktree is the git worktree for the instance.
 	gitWorktree *git.GitWorktree
 }
@@ -143,8 +145,8 @@ func FromInstanceData(data InstanceData) (*Instance, error) {
 	}
 
 	if instance.Paused() {
+		// Paused instances have no running process; processID is empty.
 		instance.started = true
-		instance.tmuxSession = tmux.NewTmuxSession(instance.Title, instance.Program)
 	} else {
 		if err := instance.Start(false); err != nil {
 			return nil, err
@@ -168,6 +170,8 @@ type InstanceOptions struct {
 	Branch string
 	// InPlace runs the session directly in the working directory without git isolation.
 	InPlace bool
+	// ProcessManager manages the terminal process lifecycle.
+	ProcessManager ProcessManager
 }
 
 func NewInstance(opts InstanceOptions) (*Instance, error) {
@@ -191,6 +195,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		AutoYes:        false,
 		selectedBranch: opts.Branch,
 		inPlace:        opts.InPlace,
+		processManager: opts.ProcessManager,
 	}, nil
 }
 
@@ -218,21 +223,31 @@ func (i *Instance) IsInPlace() bool {
 	return i.inPlace
 }
 
+// spawnProcess spawns the program in processManager using the given working directory.
+// It parses i.Program into command + args and stores the returned process ID.
+func (i *Instance) spawnProcess(dir string) error {
+	if i.processManager == nil {
+		return fmt.Errorf("process manager not set")
+	}
+	fields := strings.Fields(i.Program)
+	if len(fields) == 0 {
+		return fmt.Errorf("program is empty")
+	}
+	program := fields[0]
+	args := fields[1:]
+	id, err := i.processManager.Spawn(program, args, pty.SpawnOptions{Dir: dir})
+	if err != nil {
+		return err
+	}
+	i.processID = id
+	return nil
+}
+
 // firstTimeSetup is true if this is a new instance. Otherwise, it's one loaded from storage.
 func (i *Instance) Start(firstTimeSetup bool) error {
 	if i.Title == "" {
 		return fmt.Errorf("instance title cannot be empty")
 	}
-
-	var tmuxSession *tmux.TmuxSession
-	if i.tmuxSession != nil {
-		// Use existing tmux session (useful for testing)
-		tmuxSession = i.tmuxSession
-	} else {
-		// Create new tmux session
-		tmuxSession = tmux.NewTmuxSession(i.Title, i.Program)
-	}
-	i.tmuxSession = tmuxSession
 
 	if firstTimeSetup {
 		if i.inPlace {
@@ -282,36 +297,33 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		}
 	}()
 
-	if !firstTimeSetup {
-		// Reuse existing session
-		if err := tmuxSession.Restore(); err != nil {
-			setupErr = fmt.Errorf("failed to restore existing session: %w", err)
-			return setupErr
-		}
-	} else {
-		if i.inPlace {
-			// In-place: just start tmux in working directory
-			if err := i.tmuxSession.Start(i.Path); err != nil {
-				setupErr = fmt.Errorf("failed to start new session: %w", err)
-				return setupErr
-			}
+	// Determine the working directory for the process.
+	var workDir string
+	if i.inPlace {
+		workDir = i.Path
+	} else if i.gitWorktree != nil {
+		if !firstTimeSetup {
+			// Worktree is already set up from storage; no need to re-setup.
 		} else {
-			// Setup git worktree first
 			if err := i.gitWorktree.Setup(); err != nil {
 				setupErr = fmt.Errorf("failed to setup git worktree: %w", err)
 				return setupErr
 			}
+		}
+		workDir = i.gitWorktree.GetWorktreePath()
+	} else {
+		workDir = i.Path
+	}
 
-			// Create new session
-			if err := i.tmuxSession.Start(i.gitWorktree.GetWorktreePath()); err != nil {
-				// Cleanup git worktree if tmux session creation fails
-				if cleanupErr := i.gitWorktree.Cleanup(); cleanupErr != nil {
-					err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
-				}
-				setupErr = fmt.Errorf("failed to start new session: %w", err)
-				return setupErr
+	// Spawn the process.
+	if err := i.spawnProcess(workDir); err != nil {
+		if i.gitWorktree != nil && firstTimeSetup {
+			if cleanupErr := i.gitWorktree.Cleanup(); cleanupErr != nil {
+				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
 			}
 		}
+		setupErr = fmt.Errorf("failed to start new session: %w", err)
+		return setupErr
 	}
 
 	i.SetStatus(Running)
@@ -329,11 +341,12 @@ func (i *Instance) Kill() error {
 	var errs []error
 
 	// Always try to cleanup both resources, even if one fails
-	// Clean up tmux session first since it's using the git worktree
-	if i.tmuxSession != nil {
-		if err := i.tmuxSession.Close(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to close tmux session: %w", err))
+	// Kill the process first since it's using the git worktree
+	if i.processManager != nil && i.processID != "" {
+		if err := i.processManager.Kill(i.processID); err != nil {
+			errs = append(errs, fmt.Errorf("failed to kill process: %w", err))
 		}
+		i.processID = ""
 	}
 
 	// Then clean up git worktree
@@ -363,56 +376,58 @@ func (i *Instance) combineErrors(errs []error) error {
 }
 
 func (i *Instance) Preview() (string, error) {
-	if !i.started || i.Status == Paused || i.tmuxSession == nil {
+	if !i.started || i.Status == Paused || i.processManager == nil || i.processID == "" {
 		return "", nil
 	}
-	return i.tmuxSession.CapturePaneContent()
+	return i.processManager.GetContent(i.processID), nil
 }
 
 func (i *Instance) HasUpdated() (updated bool, hasPrompt bool) {
-	if !i.started || i.tmuxSession == nil {
+	if !i.started || i.processManager == nil || i.processID == "" {
 		return false, false
 	}
-	return i.tmuxSession.HasUpdated()
+	return i.processManager.HasUpdated(i.processID)
 }
 
-// TapEnter sends an enter key press to the tmux session if AutoYes is enabled.
 // CheckAndHandleTrustPrompt checks for and dismisses the trust prompt for supported programs.
 func (i *Instance) CheckAndHandleTrustPrompt() bool {
-	if !i.started || i.tmuxSession == nil {
+	if !i.started || i.processManager == nil || i.processID == "" {
 		return false
 	}
 	program := i.Program
-	if !strings.HasSuffix(program, tmux.ProgramClaude) &&
-		!strings.HasSuffix(program, tmux.ProgramAider) &&
-		!strings.HasSuffix(program, tmux.ProgramGemini) {
+	if !strings.HasSuffix(program, ProgramClaude) &&
+		!strings.HasSuffix(program, ProgramAider) &&
+		!strings.HasSuffix(program, ProgramGemini) {
 		return false
 	}
-	return i.tmuxSession.CheckAndHandleTrustPrompt()
+	if i.processManager.CheckTrustPrompt(i.processID) {
+		_ = i.processManager.Write(i.processID, []byte("\n"))
+		return true
+	}
+	return false
 }
 
+// TapEnter sends an enter key press to the process if AutoYes is enabled.
 func (i *Instance) TapEnter() {
-	if !i.started || !i.AutoYes || i.tmuxSession == nil {
+	if !i.started || !i.AutoYes || i.processManager == nil || i.processID == "" {
 		return
 	}
-	if err := i.tmuxSession.TapEnter(); err != nil {
+	if err := i.processManager.Write(i.processID, []byte("\n")); err != nil {
 		log.ErrorLog.Printf("error tapping enter: %v", err)
 	}
 }
 
+// Attach is not supported in the PTY/WebSocket architecture.
 func (i *Instance) Attach() (chan struct{}, error) {
-	if !i.started || i.tmuxSession == nil {
-		return nil, fmt.Errorf("cannot attach instance that has not been started")
-	}
-	return i.tmuxSession.Attach()
+	return nil, fmt.Errorf("attach not supported: use WebSocket")
 }
 
 func (i *Instance) SetPreviewSize(width, height int) error {
-	if !i.started || i.Status == Paused || i.tmuxSession == nil {
+	if !i.started || i.Status == Paused || i.processManager == nil || i.processID == "" {
 		return fmt.Errorf("cannot set preview size for instance that has not been started or " +
 			"is paused")
 	}
-	return i.tmuxSession.SetDetachedSize(width, height)
+	return i.processManager.Resize(i.processID, uint16(height), uint16(width))
 }
 
 // GetGitWorktree returns the git worktree for the instance
@@ -436,7 +451,6 @@ func (i *Instance) Started() bool {
 }
 
 // SetTitle sets the title of the instance. Returns an error if the instance has started.
-// We cant change the title once it's been used for a tmux session etc.
 func (i *Instance) SetTitle(title string) error {
 	if i.started {
 		return fmt.Errorf("cannot change title of a started instance")
@@ -449,15 +463,12 @@ func (i *Instance) Paused() bool {
 	return i.Status == Paused
 }
 
-// TmuxAlive returns true if the tmux session is alive. This is a sanity check before attaching.
+// TmuxAlive returns true if a process is currently running for this instance.
 func (i *Instance) TmuxAlive() bool {
-	if i.tmuxSession == nil {
-		return false
-	}
-	return i.tmuxSession.DoesSessionExist()
+	return i.processID != ""
 }
 
-// Pause stops the tmux session and removes the worktree, preserving the branch
+// Pause stops the process and removes the worktree, preserving the branch
 func (i *Instance) Pause() error {
 	if !i.started {
 		return fmt.Errorf("cannot pause instance that has not been started")
@@ -466,13 +477,16 @@ func (i *Instance) Pause() error {
 		return fmt.Errorf("instance is already paused")
 	}
 
-	// In-place sessions: just detach tmux, no git operations
+	// In-place sessions: just kill the process, no git operations
 	if i.inPlace {
-		if i.tmuxSession == nil {
-			return fmt.Errorf("tmux session is nil")
+		if i.processManager == nil {
+			return fmt.Errorf("process manager is nil")
 		}
-		if err := i.tmuxSession.DetachSafely(); err != nil {
-			return fmt.Errorf("failed to detach tmux session: %w", err)
+		if i.processID != "" {
+			if err := i.processManager.Kill(i.processID); err != nil {
+				return fmt.Errorf("failed to kill process: %w", err)
+			}
+			i.processID = ""
 		}
 		i.SetStatus(Paused)
 		return nil
@@ -495,14 +509,17 @@ func (i *Instance) Pause() error {
 		}
 	}
 
-	// Detach from tmux session instead of closing to preserve session output
-	if i.tmuxSession == nil {
-		return fmt.Errorf("tmux session is nil")
+	// Kill the process (process dies on pause, branch preserved)
+	if i.processManager == nil {
+		return fmt.Errorf("process manager is nil")
 	}
-	if err := i.tmuxSession.DetachSafely(); err != nil {
-		errs = append(errs, fmt.Errorf("failed to detach tmux session: %w", err))
-		log.ErrorLog.Print(err)
-		// Continue with pause process even if detach fails
+	if i.processID != "" {
+		if err := i.processManager.Kill(i.processID); err != nil {
+			errs = append(errs, fmt.Errorf("failed to kill process: %w", err))
+			log.ErrorLog.Print(err)
+			// Continue with pause process even if kill fails
+		}
+		i.processID = ""
 	}
 
 	// Check if worktree exists before trying to remove it
@@ -532,7 +549,7 @@ func (i *Instance) Pause() error {
 	return nil
 }
 
-// Resume recreates the worktree and restarts the tmux session
+// Resume recreates the worktree and spawns a fresh process
 func (i *Instance) Resume() error {
 	if !i.started {
 		return fmt.Errorf("cannot resume instance that has not been started")
@@ -541,21 +558,13 @@ func (i *Instance) Resume() error {
 		return fmt.Errorf("can only resume paused instances")
 	}
 
-	// In-place sessions: just restart tmux in working directory
+	// In-place sessions: just spawn a fresh process in working directory
 	if i.inPlace {
-		if i.tmuxSession == nil {
-			return fmt.Errorf("tmux session is nil")
+		if i.processManager == nil {
+			return fmt.Errorf("process manager is nil")
 		}
-		if i.tmuxSession.DoesSessionExist() {
-			if err := i.tmuxSession.Restore(); err != nil {
-				if err := i.tmuxSession.Start(i.Path); err != nil {
-					return fmt.Errorf("failed to start new session: %w", err)
-				}
-			}
-		} else {
-			if err := i.tmuxSession.Start(i.Path); err != nil {
-				return fmt.Errorf("failed to start new session: %w", err)
-			}
+		if err := i.spawnProcess(i.Path); err != nil {
+			return fmt.Errorf("failed to start new session: %w", err)
 		}
 		i.SetStatus(Running)
 		return nil
@@ -575,36 +584,18 @@ func (i *Instance) Resume() error {
 		return fmt.Errorf("failed to setup git worktree: %w", err)
 	}
 
-	// Check if tmux session still exists from pause, otherwise create new one
-	if i.tmuxSession == nil {
-		return fmt.Errorf("tmux session is nil")
+	// Spawn a fresh process
+	if i.processManager == nil {
+		return fmt.Errorf("process manager is nil")
 	}
-	if i.tmuxSession.DoesSessionExist() {
-		// Session exists, just restore PTY connection to it
-		if err := i.tmuxSession.Restore(); err != nil {
+	if err := i.spawnProcess(i.gitWorktree.GetWorktreePath()); err != nil {
+		log.ErrorLog.Print(err)
+		// Cleanup git worktree if process creation fails
+		if cleanupErr := i.gitWorktree.Cleanup(); cleanupErr != nil {
+			err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
 			log.ErrorLog.Print(err)
-			// If restore fails, fall back to creating new session
-			if err := i.tmuxSession.Start(i.gitWorktree.GetWorktreePath()); err != nil {
-				log.ErrorLog.Print(err)
-				// Cleanup git worktree if tmux session creation fails
-				if cleanupErr := i.gitWorktree.Cleanup(); cleanupErr != nil {
-					err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
-					log.ErrorLog.Print(err)
-				}
-				return fmt.Errorf("failed to start new session: %w", err)
-			}
 		}
-	} else {
-		// Create new tmux session
-		if err := i.tmuxSession.Start(i.gitWorktree.GetWorktreePath()); err != nil {
-			log.ErrorLog.Print(err)
-			// Cleanup git worktree if tmux session creation fails
-			if cleanupErr := i.gitWorktree.Cleanup(); cleanupErr != nil {
-				err = fmt.Errorf("%v (cleanup error: %v)", err, cleanupErr)
-				log.ErrorLog.Print(err)
-			}
-			return fmt.Errorf("failed to start new session: %w", err)
-		}
+		return fmt.Errorf("failed to start new session: %w", err)
 	}
 
 	i.SetStatus(Running)
@@ -647,52 +638,37 @@ func (i *Instance) GetDiffStats() *git.DiffStats {
 	return i.diffStats
 }
 
-// SendPrompt sends a prompt to the tmux session
+// SendPrompt sends a prompt to the process
 func (i *Instance) SendPrompt(prompt string) error {
 	if !i.started {
 		return fmt.Errorf("instance not started")
 	}
-	if i.tmuxSession == nil {
-		return fmt.Errorf("tmux session not initialized")
+	if i.processManager == nil || i.processID == "" {
+		return fmt.Errorf("process not initialized")
 	}
-	if err := i.tmuxSession.SendKeys(prompt); err != nil {
-		return fmt.Errorf("error sending keys to tmux session: %w", err)
+	if err := i.processManager.Write(i.processID, []byte(prompt+"\n")); err != nil {
+		return fmt.Errorf("error sending prompt to process: %w", err)
 	}
-
-	// Brief pause to prevent carriage return from being interpreted as newline
-	time.Sleep(100 * time.Millisecond)
-	if err := i.tmuxSession.TapEnter(); err != nil {
-		return fmt.Errorf("error tapping enter: %w", err)
-	}
-
 	return nil
 }
 
-// PreviewFullHistory captures the entire tmux pane output including full scrollback history
+// PreviewFullHistory captures the entire buffered output for this instance
 func (i *Instance) PreviewFullHistory() (string, error) {
-	if !i.started || i.Status == Paused || i.tmuxSession == nil {
+	if !i.started || i.Status == Paused || i.processManager == nil || i.processID == "" {
 		return "", nil
 	}
-	return i.tmuxSession.CapturePaneContentWithOptions("-", "-")
+	return i.processManager.GetContent(i.processID), nil
 }
 
-// GetTmuxSession returns the underlying tmux session, or nil if not started.
-func (i *Instance) GetTmuxSession() *tmux.TmuxSession {
-	if !i.started {
-		return nil
-	}
-	return i.tmuxSession
+// SetProcessManager sets the process manager for this instance.
+func (i *Instance) SetProcessManager(pm ProcessManager) {
+	i.processManager = pm
 }
 
-// SetTmuxSession sets the tmux session for testing purposes
-func (i *Instance) SetTmuxSession(session *tmux.TmuxSession) {
-	i.tmuxSession = session
-}
-
-// SendKeys sends keys to the tmux session
+// SendKeys sends keys to the process
 func (i *Instance) SendKeys(keys string) error {
-	if !i.started || i.Status == Paused || i.tmuxSession == nil {
+	if !i.started || i.Status == Paused || i.processManager == nil || i.processID == "" {
 		return fmt.Errorf("cannot send keys to instance that has not been started or is paused")
 	}
-	return i.tmuxSession.SendKeys(keys)
+	return i.processManager.Write(i.processID, []byte(keys))
 }
