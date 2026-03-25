@@ -80,12 +80,24 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 		cfg:        cfg,
 	}
 
-	// Load persisted sessions
-	instances, err := storage.LoadInstances(mgr)
+	// Load persisted sessions as metadata. Sessions that were running when
+	// last saved are loaded as paused — the process is gone, so the user
+	// must explicitly resume them.
+	allData, err := storage.LoadInstancesData()
 	if err != nil {
 		log.ErrorLog.Printf("failed to load persisted sessions: %v", err)
 	} else {
-		for _, inst := range instances {
+		for _, data := range allData {
+			// Force all loaded sessions to paused state so we don't try to
+			// spawn processes for sessions that were interrupted.
+			if data.Status != session.Paused {
+				data.Status = session.Paused
+			}
+			inst, err := session.FromInstanceData(data, mgr)
+			if err != nil {
+				log.ErrorLog.Printf("failed to restore session %s: %v", data.Title, err)
+				continue
+			}
 			api.instances[inst.Title] = inst
 		}
 	}
