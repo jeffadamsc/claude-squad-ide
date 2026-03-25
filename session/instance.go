@@ -65,6 +65,8 @@ type Instance struct {
 	// HostID is the SSH host ID for remote sessions (empty = local).
 	HostID string
 
+	// gitExecutor is the command executor for git operations (local or remote SSH).
+	gitExecutor git.CommandExecutor
 	// DiffStats stores the current git diff statistics
 	diffStats *git.DiffStats
 
@@ -196,21 +198,27 @@ type InstanceOptions struct {
 	HostID string
 	// ProcessManager manages the terminal process lifecycle.
 	ProcessManager ProcessManager
+	// GitExecutor overrides git command execution (e.g., for remote SSH). Nil means local.
+	GitExecutor git.CommandExecutor
 }
 
 func NewInstance(opts InstanceOptions) (*Instance, error) {
 	t := time.Now()
 
-	// Convert path to absolute
-	absPath, err := filepath.Abs(opts.Path)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get absolute path: %w", err)
+	// Convert path to absolute (skip for remote sessions where the path is on another machine)
+	path := opts.Path
+	if opts.HostID == "" {
+		absPath, err := filepath.Abs(opts.Path)
+		if err != nil {
+			return nil, fmt.Errorf("failed to get absolute path: %w", err)
+		}
+		path = absPath
 	}
 
 	return &Instance{
 		Title:          opts.Title,
 		Status:         Ready,
-		Path:           absPath,
+		Path:           path,
 		Program:        opts.Program,
 		Height:         0,
 		Width:          0,
@@ -222,6 +230,7 @@ func NewInstance(opts InstanceOptions) (*Instance, error) {
 		selectedBranch: opts.Branch,
 		inPlace:        opts.InPlace,
 		processManager: opts.ProcessManager,
+		gitExecutor:    opts.GitExecutor,
 	}, nil
 }
 
@@ -310,18 +319,22 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 	}
 
 	if firstTimeSetup {
+		exec := i.gitExecutor // nil means local (default)
 		if i.inPlace {
 			// In-place: no worktree, set branch from current working directory
-			if branch, err := git.GetCurrentBranch(i.Path); err == nil && branch != "" {
+			log.InfoLog.Printf("Start(%s): in-place mode, getting current branch", i.Title)
+			if branch, err := git.GetCurrentBranchWithExecutor(i.Path, exec); err == nil && branch != "" {
 				i.Branch = branch
 			}
 		} else if i.selectedBranch != "" {
 			// Fetch latest remote state so origin/* refs (and submodule pointers) are current.
-			git.FetchBranches(i.Path)
+			log.InfoLog.Printf("Start(%s): fetching branches for path=%s", i.Title, i.Path)
+			git.FetchBranchesWithExecutor(i.Path, exec)
+			log.InfoLog.Printf("Start(%s): creating worktree from ref %s", i.Title, i.selectedBranch)
 			// Create a new branch based on the selected branch. We use the selected
 			// branch as a ref rather than checking it out directly, because the
 			// selected branch may already be checked out in the main worktree.
-			gitWorktree, branchName, err := git.NewGitWorktreeFromRef(i.Path, i.selectedBranch, i.Title)
+			gitWorktree, branchName, err := git.NewGitWorktreeFromRefWithExecutor(i.Path, i.selectedBranch, i.Title, exec)
 			if err != nil {
 				return fmt.Errorf("failed to create git worktree from branch %s: %w", i.selectedBranch, err)
 			}
@@ -329,13 +342,17 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 			i.Branch = branchName
 		} else {
 			// Default: fetch origin and create worktree from remote default branch
-			git.FetchBranches(i.Path)
-			defaultBranch := git.GetDefaultBranch(i.Path)
+			log.InfoLog.Printf("Start(%s): fetching branches for path=%s", i.Title, i.Path)
+			git.FetchBranchesWithExecutor(i.Path, exec)
+			log.InfoLog.Printf("Start(%s): getting default branch", i.Title)
+			defaultBranch := git.GetDefaultBranchWithExecutor(i.Path, exec)
 			baseRef := fmt.Sprintf("origin/%s", defaultBranch)
-			gitWorktree, branchName, err := git.NewGitWorktreeFromRef(i.Path, baseRef, i.Title)
+			log.InfoLog.Printf("Start(%s): creating worktree from ref %s", i.Title, baseRef)
+			gitWorktree, branchName, err := git.NewGitWorktreeFromRefWithExecutor(i.Path, baseRef, i.Title, exec)
 			if err != nil {
 				// Fall back to HEAD if origin ref fails
-				gitWorktree, branchName, err = git.NewGitWorktree(i.Path, i.Title)
+				log.InfoLog.Printf("Start(%s): ref failed, falling back to HEAD: %v", i.Title, err)
+				gitWorktree, branchName, err = git.NewGitWorktreeWithExecutor(i.Path, i.Title, exec)
 				if err != nil {
 					return fmt.Errorf("failed to create git worktree: %w", err)
 				}
@@ -365,16 +382,19 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 		if !firstTimeSetup {
 			// Worktree is already set up from storage; no need to re-setup.
 		} else {
+			log.InfoLog.Printf("Start(%s): running worktree Setup", i.Title)
 			if err := i.gitWorktree.Setup(); err != nil {
 				setupErr = fmt.Errorf("failed to setup git worktree: %w", err)
 				return setupErr
 			}
+			log.InfoLog.Printf("Start(%s): worktree Setup complete", i.Title)
 		}
 		workDir = i.gitWorktree.GetWorktreePath()
 	} else {
 		workDir = i.Path
 	}
 
+	log.InfoLog.Printf("Start(%s): spawning process in %s", i.Title, workDir)
 	// Spawn the process.
 	if err := i.spawnProcess(workDir, false); err != nil {
 		if i.gitWorktree != nil && firstTimeSetup {
@@ -589,7 +609,7 @@ func (i *Instance) Pause() error {
 	}
 
 	// Check if worktree exists before trying to remove it
-	if _, err := os.Stat(i.gitWorktree.GetWorktreePath()); err == nil {
+	if i.pathExists(i.gitWorktree.GetWorktreePath()) {
 		// Remove worktree but keep branch
 		if err := i.gitWorktree.Remove(); err != nil {
 			errs = append(errs, fmt.Errorf("failed to remove git worktree: %w", err))
@@ -644,9 +664,9 @@ func (i *Instance) Resume() error {
 		return fmt.Errorf("cannot resume: branch is checked out, please switch to a different branch")
 	}
 
-	// Setup git worktree only if it doesn't already exist on disk
+	// Setup git worktree only if it doesn't already exist
 	wtPath := i.gitWorktree.GetWorktreePath()
-	if _, err := os.Stat(wtPath); os.IsNotExist(err) {
+	if !i.pathExists(wtPath) {
 		log.InfoLog.Printf("worktree %s not found, running Setup", wtPath)
 		if err := i.gitWorktree.Setup(); err != nil {
 			log.ErrorLog.Print(err)
@@ -735,6 +755,24 @@ func (i *Instance) PreviewFullHistory() (string, error) {
 // SetProcessManager sets the process manager for this instance.
 func (i *Instance) SetProcessManager(pm ProcessManager) {
 	i.processManager = pm
+}
+
+// SetGitExecutor overrides the git command executor (e.g., for remote SSH).
+func (i *Instance) SetGitExecutor(exec git.CommandExecutor) {
+	i.gitExecutor = exec
+	if i.gitWorktree != nil {
+		i.gitWorktree.SetExecutor(exec)
+	}
+}
+
+// pathExists checks if a path exists, using the remote executor for remote sessions.
+func (i *Instance) pathExists(path string) bool {
+	if i.HostID != "" && i.gitExecutor != nil {
+		_, err := i.gitExecutor.Run("", "test", "-d", path)
+		return err == nil
+	}
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // SendKeys sends keys to the process

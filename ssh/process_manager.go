@@ -65,14 +65,15 @@ func (m *SSHProcessManager) Spawn(program string, args []string, opts pty.SpawnO
 		return "", fmt.Errorf("stdout pipe: %w", err)
 	}
 
-	// Build command
-	cmd := program
+	// Build command — wrap in login shell so ~/.profile/.bashrc are sourced
+	innerCmd := program
 	if len(args) > 0 {
-		cmd += " " + strings.Join(args, " ")
+		innerCmd += " " + strings.Join(args, " ")
 	}
 	if opts.Dir != "" {
-		cmd = fmt.Sprintf("cd %s && %s", ShellEscape(opts.Dir), cmd)
+		innerCmd = fmt.Sprintf("cd %s && %s", ShellEscape(opts.Dir), innerCmd)
 	}
+	cmd := fmt.Sprintf("bash -lc %s", ShellEscape(innerCmd))
 
 	if err := session.Start(cmd); err != nil {
 		session.Close()
@@ -224,4 +225,13 @@ func (r *DynamicSSHRegistry) Get(id string) pty.StreamableSession {
 		}
 	}
 	return nil
+}
+
+func (r *DynamicSSHRegistry) Resize(id string, rows, cols uint16) error {
+	for _, pm := range r.hm.GetAllProcessManagers() {
+		if err := pm.Resize(id, rows, cols); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("ssh session %s not found", id)
 }

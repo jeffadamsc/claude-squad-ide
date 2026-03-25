@@ -96,7 +96,8 @@ func TestConnection(config HostConfig, secret string, program string) (connOK bo
 	}
 	defer session.Close()
 
-	progCmd := fmt.Sprintf("which %s", program)
+	// Use login shell so ~/.profile and ~/.bashrc are sourced for PATH
+	progCmd := fmt.Sprintf("bash -lc 'which %s'", program)
 	if err := session.Run(progCmd); err != nil {
 		return true, false, fmt.Sprintf("Program '%s' not found on remote PATH", program)
 	}
@@ -224,7 +225,16 @@ func buildSSHConfig(host HostConfig, secret string) (*ssh.ClientConfig, error) {
 
 	switch host.AuthMethod {
 	case AuthMethodPassword:
-		cfg.Auth = []ssh.AuthMethod{ssh.Password(secret)}
+		cfg.Auth = []ssh.AuthMethod{
+			ssh.Password(secret),
+			ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+				answers := make([]string, len(questions))
+				for i := range questions {
+					answers[i] = secret
+				}
+				return answers, nil
+			}),
+		}
 	case AuthMethodKey:
 		keyData, err := os.ReadFile(host.KeyPath)
 		if err != nil {

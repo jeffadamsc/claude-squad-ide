@@ -23,6 +23,7 @@ type HostConfig struct {
 	User       string `json:"user"`
 	AuthMethod string `json:"authMethod"`
 	KeyPath    string `json:"keyPath,omitempty"`
+	LastPath   string `json:"lastPath,omitempty"`
 }
 
 // HostStore manages persistent host configurations in a JSON file.

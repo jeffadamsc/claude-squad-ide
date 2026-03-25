@@ -38,6 +38,30 @@ export namespace app {
 		    return a;
 		}
 	}
+	export class CreateHostOptions {
+	    name: string;
+	    host: string;
+	    port: number;
+	    user: string;
+	    authMethod: string;
+	    keyPath: string;
+	    secret: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CreateHostOptions(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.authMethod = source["authMethod"];
+	        this.keyPath = source["keyPath"];
+	        this.secret = source["secret"];
+	    }
+	}
 	export class CreateOptions {
 	    title: string;
 	    path: string;
@@ -46,6 +70,7 @@ export namespace app {
 	    autoYes: boolean;
 	    inPlace: boolean;
 	    prompt: string;
+	    hostId: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateOptions(source);
@@ -60,6 +85,7 @@ export namespace app {
 	        this.autoYes = source["autoYes"];
 	        this.inPlace = source["inPlace"];
 	        this.prompt = source["prompt"];
+	        this.hostId = source["hostId"];
 	    }
 	}
 	export class DiffStats {
@@ -90,6 +116,46 @@ export namespace app {
 	        this.branches = source["branches"];
 	    }
 	}
+	export class HostInfo {
+	    id: string;
+	    name: string;
+	    host: string;
+	    port: number;
+	    user: string;
+	    authMethod: string;
+	    keyPath: string;
+	    lastPath: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new HostInfo(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.id = source["id"];
+	        this.name = source["name"];
+	        this.host = source["host"];
+	        this.port = source["port"];
+	        this.user = source["user"];
+	        this.authMethod = source["authMethod"];
+	        this.keyPath = source["keyPath"];
+	        this.lastPath = source["lastPath"];
+	    }
+	}
+	export class RemoteDirEntry {
+	    name: string;
+	    isDir: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new RemoteDirEntry(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.isDir = source["isDir"];
+	    }
+	}
 	export class SessionInfo {
 	    id: string;
 	    title: string;
@@ -97,6 +163,7 @@ export namespace app {
 	    branch: string;
 	    program: string;
 	    status: string;
+	    hostId: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionInfo(source);
@@ -110,6 +177,7 @@ export namespace app {
 	        this.branch = source["branch"];
 	        this.program = source["program"];
 	        this.status = source["status"];
+	        this.hostId = source["hostId"];
 	    }
 	}
 	export class SessionStatus {
@@ -118,6 +186,7 @@ export namespace app {
 	    branch: string;
 	    diffStats: DiffStats;
 	    hasPrompt: boolean;
+	    sshConnected?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionStatus(source);
@@ -130,6 +199,7 @@ export namespace app {
 	        this.branch = source["branch"];
 	        this.diffStats = this.convertValues(source["diffStats"], DiffStats);
 	        this.hasPrompt = source["hasPrompt"];
+	        this.sshConnected = source["sshConnected"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -149,6 +219,22 @@ export namespace app {
 		    }
 		    return a;
 		}
+	}
+	export class TestHostResult {
+	    connectionOK: boolean;
+	    programOK: boolean;
+	    message: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new TestHostResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.connectionOK = source["connectionOK"];
+	        this.programOK = source["programOK"];
+	        this.message = source["message"];
+	    }
 	}
 
 }

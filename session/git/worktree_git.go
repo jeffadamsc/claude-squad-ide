@@ -9,8 +9,15 @@ import (
 
 // GetCurrentBranch returns the current branch name for the given repo path.
 func GetCurrentBranch(repoPath string) (string, error) {
-	cmd := exec.Command("git", "-C", repoPath, "branch", "--show-current")
-	output, err := cmd.CombinedOutput()
+	return GetCurrentBranchWithExecutor(repoPath, nil)
+}
+
+// GetCurrentBranchWithExecutor returns the current branch name using the given executor.
+func GetCurrentBranchWithExecutor(repoPath string, exec CommandExecutor) (string, error) {
+	if exec == nil {
+		exec = defaultExecutor
+	}
+	output, err := exec.Run(repoPath, "git", "branch", "--show-current")
 	if err != nil {
 		return "", fmt.Errorf("failed to get current branch: %s (%w)", output, err)
 	}
@@ -20,9 +27,16 @@ func GetCurrentBranch(repoPath string) (string, error) {
 // GetDefaultBranch returns the default branch name for the remote origin.
 // Falls back to the current branch, then to "main" if both fail.
 func GetDefaultBranch(repoPath string) string {
+	return GetDefaultBranchWithExecutor(repoPath, nil)
+}
+
+// GetDefaultBranchWithExecutor returns the default branch name using the given executor.
+func GetDefaultBranchWithExecutor(repoPath string, exec CommandExecutor) string {
+	if exec == nil {
+		exec = defaultExecutor
+	}
 	// Try to get the remote default branch
-	cmd := exec.Command("git", "-C", repoPath, "symbolic-ref", "refs/remotes/origin/HEAD")
-	if output, err := cmd.CombinedOutput(); err == nil {
+	if output, err := exec.Run(repoPath, "git", "symbolic-ref", "refs/remotes/origin/HEAD"); err == nil {
 		ref := strings.TrimSpace(string(output))
 		// Strip "refs/remotes/origin/" prefix
 		if name := strings.TrimPrefix(ref, "refs/remotes/origin/"); name != ref {
@@ -32,8 +46,7 @@ func GetDefaultBranch(repoPath string) string {
 
 	// Check if "main" or "master" exists as a remote branch
 	for _, candidate := range []string{"main", "master"} {
-		checkCmd := exec.Command("git", "-C", repoPath, "show-ref", "--verify", fmt.Sprintf("refs/remotes/origin/%s", candidate))
-		if err := checkCmd.Run(); err == nil {
+		if _, err := exec.Run(repoPath, "git", "show-ref", "--verify", fmt.Sprintf("refs/remotes/origin/%s", candidate)); err == nil {
 			return candidate
 		}
 	}
@@ -47,8 +60,15 @@ const MaxBranchSearchResults = 50
 
 // FetchBranches fetches and prunes remote-tracking branches (best-effort, won't fail if offline).
 func FetchBranches(repoPath string) {
-	cmd := exec.Command("git", "-C", repoPath, "fetch", "--prune")
-	_ = cmd.Run()
+	FetchBranchesWithExecutor(repoPath, nil)
+}
+
+// FetchBranchesWithExecutor fetches branches using the given executor.
+func FetchBranchesWithExecutor(repoPath string, exec CommandExecutor) {
+	if exec == nil {
+		exec = defaultExecutor
+	}
+	_, _ = exec.Run(repoPath, "git", "fetch", "--prune")
 }
 
 // SearchBranches searches for branches whose name contains filter (case-insensitive),

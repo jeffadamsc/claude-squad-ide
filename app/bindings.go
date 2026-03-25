@@ -78,7 +78,8 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 
 	sshRegistry := sshPkg.NewDynamicSSHRegistry(hostMgr)
 	composite := ptyPkg.NewCompositeRegistry(mgr, sshRegistry)
-	ws := ptyPkg.NewWebSocketServer(composite, mgr)
+	compositeResizer := ptyPkg.NewCompositeResizer(mgr, sshRegistry)
+	ws := ptyPkg.NewWebSocketServer(composite, compositeResizer)
 
 	port, err := ws.ListenAndServe()
 	if err != nil {
@@ -162,21 +163,36 @@ func (api *SessionAPI) CreateSession(opts CreateOptions) (*SessionInfo, error) {
 	api.mu.Lock()
 	defer api.mu.Unlock()
 
+	log.InfoLog.Printf("CreateSession: title=%q path=%q hostID=%q", opts.Title, opts.Path, opts.HostID)
+
 	program := opts.Program
 	if program == "" {
 		program = api.cfg.DefaultProgram
 	}
 
 	var pm session.ProcessManager = api.ptyManager
+	var gitExec git.CommandExecutor
 	if opts.HostID != "" {
-		if _, err := api.hostManager.GetClient(opts.HostID); err != nil {
+		client, err := api.hostManager.GetClient(opts.HostID)
+		if err != nil {
 			return nil, fmt.Errorf("connect to remote host: %w", err)
 		}
+		// Resolve ~ to absolute path so all downstream commands work.
+		opts.Path, err = resolveTilde(client, opts.Path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve remote path: %w", err)
+		}
+
 		sshPM, err := api.hostManager.GetProcessManager(opts.HostID)
 		if err != nil {
 			return nil, fmt.Errorf("get ssh process manager: %w", err)
 		}
 		pm = sshPM
+		gitExec = &git.RemoteExecutor{
+			RunCmd: func(cmd string) (string, error) {
+				return client.RunCommand("bash -lc " + sshPkg.ShellEscape(cmd))
+			},
+		}
 	}
 
 	inst, err := session.NewInstance(session.InstanceOptions{
@@ -189,6 +205,7 @@ func (api *SessionAPI) CreateSession(opts CreateOptions) (*SessionInfo, error) {
 		Prompt:         opts.Prompt,
 		HostID:         opts.HostID,
 		ProcessManager: pm,
+		GitExecutor:    gitExec,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create instance: %w", err)
@@ -218,7 +235,8 @@ func (api *SessionAPI) OpenSession(id string) (string, error) {
 
 	// Reconnect remote sessions if needed
 	if inst.HostID != "" {
-		if _, err := api.hostManager.GetClient(inst.HostID); err != nil {
+		client, err := api.hostManager.GetClient(inst.HostID)
+		if err != nil {
 			return "", fmt.Errorf("reconnect to remote host: %w", err)
 		}
 		pm, err := api.hostManager.GetProcessManager(inst.HostID)
@@ -226,6 +244,11 @@ func (api *SessionAPI) OpenSession(id string) (string, error) {
 			return "", fmt.Errorf("get ssh process manager: %w", err)
 		}
 		inst.SetProcessManager(pm)
+		inst.SetGitExecutor(&git.RemoteExecutor{
+			RunCmd: func(cmd string) (string, error) {
+				return client.RunCommand("bash -lc " + sshPkg.ShellEscape(cmd))
+			},
+		})
 	}
 
 	// Resume paused sessions
@@ -251,6 +274,7 @@ func (api *SessionAPI) OpenSession(id string) (string, error) {
 }
 
 func (api *SessionAPI) StartSession(id string) error {
+	log.InfoLog.Printf("StartSession called for id=%q", id)
 	api.mu.Lock()
 	inst, ok := api.instances[id]
 	if !ok {
@@ -268,6 +292,11 @@ func (api *SessionAPI) StartSession(id string) error {
 	// Start is slow (git worktree setup, process spawn) — run without holding the lock
 	// so the status poller can continue to report "loading" state
 	if err := inst.Start(true); err != nil {
+		log.ErrorLog.Printf("StartSession failed for %q: %v", id, err)
+		// Reset status so the UI doesn't show it as permanently loading
+		api.mu.Lock()
+		inst.SetStatus(session.Ready)
+		api.mu.Unlock()
 		return fmt.Errorf("start session: %w", err)
 	}
 
@@ -485,6 +514,7 @@ type HostInfo struct {
 	User       string `json:"user"`
 	AuthMethod string `json:"authMethod"`
 	KeyPath    string `json:"keyPath"`
+	LastPath   string `json:"lastPath"`
 }
 
 type CreateHostOptions struct {
@@ -513,7 +543,7 @@ func (api *SessionAPI) GetHosts() ([]HostInfo, error) {
 		result[i] = HostInfo{
 			ID: h.ID, Name: h.Name, Host: h.Host,
 			Port: h.Port, User: h.User, AuthMethod: h.AuthMethod,
-			KeyPath: h.KeyPath,
+			KeyPath: h.KeyPath, LastPath: h.LastPath,
 		}
 	}
 	return result, nil
@@ -594,6 +624,8 @@ func (api *SessionAPI) GetRemoteDirInfo(hostID string, dir string) (*DirInfo, er
 	}
 	defer api.hostManager.ReleaseClient(hostID)
 
+	dir, _ = resolveTilde(client, dir)
+
 	out, err := client.RunCommand(fmt.Sprintf("cd %s && git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@'", shellEscape(dir)))
 	defaultBranch := "main"
 	if err == nil {
@@ -622,6 +654,8 @@ func (api *SessionAPI) SearchRemoteBranches(hostID string, dir string, filter st
 	}
 	defer api.hostManager.ReleaseClient(hostID)
 
+	dir, _ = resolveTilde(client, dir)
+
 	cmd := fmt.Sprintf("cd %s && git branch -a --sort=-committerdate --format='%%(refname:short)' 2>/dev/null", shellEscape(dir))
 	if filter != "" {
 		cmd += fmt.Sprintf(" | grep -i %s", shellEscape(filter))
@@ -639,6 +673,88 @@ func (api *SessionAPI) SearchRemoteBranches(hostID string, dir string, filter st
 		}
 	}
 	return branches, nil
+}
+
+type RemoteDirEntry struct {
+	Name  string `json:"name"`
+	IsDir bool   `json:"isDir"`
+}
+
+// ListRemoteDir lists directories in a path on a remote host.
+func (api *SessionAPI) ListRemoteDir(hostID string, dir string) ([]RemoteDirEntry, error) {
+	client, err := api.hostManager.GetClient(hostID)
+	if err != nil {
+		return nil, fmt.Errorf("connect to host: %w", err)
+	}
+	defer api.hostManager.ReleaseClient(hostID)
+
+	dir, err = resolveTilde(client, dir)
+	if err != nil {
+		return nil, err
+	}
+
+	// List only directories, one per line
+	out, err := client.RunCommand(fmt.Sprintf("ls -1pA %s 2>/dev/null", shellEscape(dir)))
+	if err != nil {
+		return nil, fmt.Errorf("list directory: %w", err)
+	}
+
+	var entries []RemoteDirEntry
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasSuffix(line, "/") {
+			name := strings.TrimSuffix(line, "/")
+			if name != "" {
+				entries = append(entries, RemoteDirEntry{Name: name, IsDir: true})
+			}
+		}
+	}
+	return entries, nil
+}
+
+// CheckRemoteGitRepo checks if a path on a remote host is a git repository.
+func (api *SessionAPI) CheckRemoteGitRepo(hostID string, dir string) (bool, error) {
+	client, err := api.hostManager.GetClient(hostID)
+	if err != nil {
+		return false, fmt.Errorf("connect to host: %w", err)
+	}
+	defer api.hostManager.ReleaseClient(hostID)
+
+	dir, err = resolveTilde(client, dir)
+	if err != nil {
+		return false, err
+	}
+
+	_, err = client.RunCommand(fmt.Sprintf("cd %s && git rev-parse --show-toplevel", shellEscape(dir)))
+	return err == nil, nil
+}
+
+// SetHostLastPath saves the last-used path for a host.
+func (api *SessionAPI) SetHostLastPath(hostID string, path string) error {
+	config, err := api.hostStore.GetByID(hostID)
+	if err != nil {
+		return err
+	}
+	config.LastPath = path
+	return api.hostStore.Update(config)
+}
+
+// resolveTilde resolves ~ or ~/... paths using the remote host's $HOME.
+func resolveTilde(client *sshPkg.Client, dir string) (string, error) {
+	if dir == "~" || strings.HasPrefix(dir, "~/") {
+		homeOut, err := client.RunCommand("echo $HOME")
+		if err != nil {
+			return "", fmt.Errorf("resolve home dir: %w", err)
+		}
+		home := strings.TrimSpace(homeOut)
+		if dir == "~" {
+			return home, nil
+		}
+		return home + dir[1:], nil
+	}
+	return dir, nil
 }
 
 func shellEscape(s string) string {

@@ -11,14 +11,18 @@ import (
 
 // Setup creates a new worktree for the session
 func (g *GitWorktree) Setup() error {
-	// Ensure worktrees directory exists early (can be done in parallel with branch check)
-	worktreesDir, err := getWorktreeDirectory()
-	if err != nil {
-		return fmt.Errorf("failed to get worktree directory: %w", err)
-	}
-
-	if err := os.MkdirAll(worktreesDir, 0755); err != nil {
-		return err
+	// Ensure worktrees parent directory exists.
+	// The worktreePath was already resolved (local or remote) by the constructor.
+	worktreesDir := filepath.Dir(g.worktreePath)
+	exec := g.getExecutor()
+	if _, isRemote := exec.(*RemoteExecutor); isRemote {
+		if _, err := exec.Run("", "mkdir", "-p", worktreesDir); err != nil {
+			return fmt.Errorf("failed to create remote worktree directory: %w", err)
+		}
+	} else {
+		if err := os.MkdirAll(worktreesDir, 0755); err != nil {
+			return err
+		}
 	}
 
 	// If this worktree uses a pre-existing branch, always set up from that branch
@@ -33,7 +37,7 @@ func (g *GitWorktree) Setup() error {
 	}
 
 	// Check if branch exists using git CLI (much faster than go-git PlainOpen)
-	_, err = g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName))
+	_, err := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/heads/%s", g.branchName))
 	if err == nil {
 		return g.setupFromExistingBranch()
 	}
@@ -128,8 +132,15 @@ func (g *GitWorktree) setupFromRef() error {
 // Skips silently if the repo has no submodules.
 func (g *GitWorktree) initAndFetchSubmodules() error {
 	// Check if .gitmodules exists in the worktree
-	if _, err := os.Stat(filepath.Join(g.worktreePath, ".gitmodules")); os.IsNotExist(err) {
-		return nil
+	exec := g.getExecutor()
+	if _, isRemote := exec.(*RemoteExecutor); isRemote {
+		if _, err := exec.Run("", "test", "-f", g.worktreePath+"/.gitmodules"); err != nil {
+			return nil // no submodules
+		}
+	} else {
+		if _, err := os.Stat(filepath.Join(g.worktreePath, ".gitmodules")); os.IsNotExist(err) {
+			return nil
+		}
 	}
 
 	// Initialize submodules
@@ -161,14 +172,23 @@ func (g *GitWorktree) Cleanup() error {
 	var errs []error
 
 	// Check if worktree path exists before attempting removal
-	if _, err := os.Stat(g.worktreePath); err == nil {
-		// Remove the worktree using git command
+	exec := g.getExecutor()
+	worktreeExists := false
+	if _, isRemote := exec.(*RemoteExecutor); isRemote {
+		if _, err := exec.Run("", "test", "-d", g.worktreePath); err == nil {
+			worktreeExists = true
+		}
+	} else {
+		if _, err := os.Stat(g.worktreePath); err == nil {
+			worktreeExists = true
+		} else if !os.IsNotExist(err) {
+			errs = append(errs, fmt.Errorf("failed to check worktree path: %w", err))
+		}
+	}
+	if worktreeExists {
 		if _, err := g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath); err != nil {
 			errs = append(errs, err)
 		}
-	} else if !os.IsNotExist(err) {
-		// Only append error if it's not a "not exists" error
-		errs = append(errs, fmt.Errorf("failed to check worktree path: %w", err))
 	}
 
 	// Delete the branch using git CLI, but skip if this is a pre-existing branch

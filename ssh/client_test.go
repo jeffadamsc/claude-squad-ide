@@ -48,7 +48,7 @@ func TestBuildSSHConfig_Password(t *testing.T) {
 	}, "my-password")
 	require.NoError(t, err)
 	assert.Equal(t, "deploy", cfg.User)
-	assert.Len(t, cfg.Auth, 1)
+	assert.Len(t, cfg.Auth, 2) // password + keyboard-interactive
 }
 
 func TestBuildSSHConfig_Key(t *testing.T) {

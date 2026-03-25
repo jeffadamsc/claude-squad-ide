@@ -79,10 +79,10 @@ export function AddHostDialog({ program, onSubmit, onCancel }: AddHostDialogProp
         justifyContent: "center",
         zIndex: 3000,
       }}
-      onClick={onCancel}
+      onMouseDown={onCancel}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
           background: "var(--base)",
           border: "1px solid var(--surface0)",
@@ -96,16 +96,16 @@ export function AddHostDialog({ program, onSubmit, onCancel }: AddHostDialogProp
         <h3 style={{ marginBottom: 16, marginTop: 0 }}>Add SSH Host</h3>
 
         <label style={{ ...labelStyle, marginTop: 0 }}>Name</label>
-        <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="dev-server" autoFocus />
+        <input style={inputStyle} value={name} onChange={(e) => setName(e.target.value)} placeholder="dev-server" autoFocus autoCapitalize="off" autoCorrect="off" spellCheck={false} />
 
         <label style={labelStyle}>Host</label>
-        <input style={inputStyle} value={host} onChange={(e) => setHost(e.target.value)} placeholder="192.168.1.50 or hostname" />
+        <input style={inputStyle} value={host} onChange={(e) => setHost(e.target.value)} placeholder="192.168.1.50 or hostname" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
 
         <label style={labelStyle}>Port</label>
         <input style={{ ...inputStyle, width: 100 }} type="number" value={port} onChange={(e) => setPort(parseInt(e.target.value) || 22)} />
 
         <label style={labelStyle}>User</label>
-        <input style={inputStyle} value={user} onChange={(e) => setUser(e.target.value)} placeholder="deploy" />
+        <input style={inputStyle} value={user} onChange={(e) => setUser(e.target.value)} placeholder="deploy" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
 
         <label style={labelStyle}>Auth Method</label>
         <div style={{ display: "flex", gap: 16, marginTop: 4 }}>
@@ -134,7 +134,7 @@ export function AddHostDialog({ program, onSubmit, onCancel }: AddHostDialogProp
           <>
             <label style={labelStyle}>Private Key</label>
             <div style={{ display: "flex", gap: 8 }}>
-              <input style={{ ...inputStyle, flex: 1 }} value={keyPath} onChange={(e) => { setKeyPath(e.target.value); setTested(false); }} placeholder="~/.ssh/id_ed25519" />
+              <input style={{ ...inputStyle, flex: 1 }} value={keyPath} onChange={(e) => { setKeyPath(e.target.value); setTested(false); }} placeholder="~/.ssh/id_ed25519" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
               <button
                 onClick={handleBrowse}
                 style={{

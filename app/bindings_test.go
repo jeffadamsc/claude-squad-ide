@@ -2,15 +2,19 @@ package app
 
 import (
 	"claude-squad/config"
+	logPkg "claude-squad/log"
 	ptyPkg "claude-squad/pty"
 	"claude-squad/session"
 	sshPkg "claude-squad/ssh"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+var initLogOnce sync.Once
 
 func TestSessionAPI_CreateAndLoad(t *testing.T) {
 	api := newTestAPI(t)
@@ -72,6 +76,8 @@ func TestSessionStatus_SSHConnected(t *testing.T) {
 // newTestAPI creates a SessionAPI with isolated storage (empty state).
 func newTestAPI(t *testing.T) *SessionAPI {
 	t.Helper()
+
+	initLogOnce.Do(func() { logPkg.Initialize(false) })
 
 	mgr := ptyPkg.NewManager()
 	ws := ptyPkg.NewWebSocketServer(mgr, mgr)

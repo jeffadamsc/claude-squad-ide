@@ -1,5 +1,7 @@
 package pty
 
+import "fmt"
+
 // Subscriber receives live terminal output via a channel.
 type Subscriber struct {
 	Ch chan []byte
@@ -35,4 +37,22 @@ func (c *CompositeRegistry) Get(id string) StreamableSession {
 		}
 	}
 	return nil
+}
+
+// CompositeResizer tries multiple resizers in order, returning on the first success.
+type CompositeResizer struct {
+	resizers []Resizer
+}
+
+func NewCompositeResizer(resizers ...Resizer) *CompositeResizer {
+	return &CompositeResizer{resizers: resizers}
+}
+
+func (c *CompositeResizer) Resize(id string, rows, cols uint16) error {
+	for _, r := range c.resizers {
+		if err := r.Resize(id, rows, cols); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("session %s not found in any resizer", id)
 }

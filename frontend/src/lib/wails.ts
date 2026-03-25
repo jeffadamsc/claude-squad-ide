@@ -36,6 +36,12 @@ export interface HostInfo {
   user: string;
   authMethod: string;
   keyPath: string;
+  lastPath: string;
+}
+
+export interface RemoteDirEntry {
+  name: string;
+  isDir: boolean;
 }
 
 export interface CreateHostOptions {
@@ -92,6 +98,9 @@ declare global {
           TestHost(opts: CreateHostOptions, program: string): Promise<TestHostResult>;
           GetRemoteDirInfo(hostId: string, dir: string): Promise<DirInfo>;
           SearchRemoteBranches(hostId: string, dir: string, filter: string): Promise<string[]>;
+          ListRemoteDir(hostId: string, dir: string): Promise<RemoteDirEntry[]>;
+          CheckRemoteGitRepo(hostId: string, dir: string): Promise<boolean>;
+          SetHostLastPath(hostId: string, path: string): Promise<void>;
           SelectFile(startDir: string): Promise<string>;
         };
       };

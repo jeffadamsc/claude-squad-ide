@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import type { CreateOptions, DirInfo } from "../../lib/wails";
 import { api } from "../../lib/wails";
 import { AddHostDialog } from "./AddHostDialog";
+import { RemotePathBrowser } from "./RemotePathBrowser";
 import { useSessionStore } from "../../store/sessionStore";
 
 interface NewSessionDialogProps {
@@ -21,6 +22,7 @@ export function NewSessionDialog({
   const addHost = useSessionStore((s) => s.addHost);
   const [selectedHostId, setSelectedHostId] = useState("");
   const [showAddHost, setShowAddHost] = useState(false);
+  const [showPathBrowser, setShowPathBrowser] = useState(false);
   const [title, setTitle] = useState("");
   const [path, setPath] = useState(defaultWorkDir);
   const [program, setProgram] = useState(profiles[0]?.Program ?? "claude");
@@ -31,7 +33,26 @@ export function NewSessionDialog({
   const [branches, setBranches] = useState<string[]>([]);
   const [defaultBranch, setDefaultBranch] = useState("main");
   const [loadingBranches, setLoadingBranches] = useState(false);
+  const [pathError, setPathError] = useState("");
+  const [pathValidated, setPathValidated] = useState(false);
   const searchTimeout = useRef<ReturnType<typeof setTimeout>>();
+
+  const isRemote = selectedHostId !== "";
+  const selectedHost = hosts.find((h) => h.id === selectedHostId);
+
+  // When host changes, update path to last-used path for that host
+  useEffect(() => {
+    if (isRemote && selectedHost) {
+      const lastPath = selectedHost.lastPath || "~";
+      setPath(lastPath);
+      setPathValidated(false);
+      setPathError("");
+    } else {
+      setPath(defaultWorkDir);
+      setPathValidated(false);
+      setPathError("");
+    }
+  }, [selectedHostId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const newBranchLabel = `New branch (from ${defaultBranch})`;
 
@@ -57,8 +78,17 @@ export function NewSessionDialog({
   }, [selectedHostId]);
 
   useEffect(() => {
-    loadDirInfo(path);
-  }, [path, loadDirInfo]);
+    if (pathValidated || !isRemote) {
+      loadDirInfo(path);
+    }
+  }, [path, pathValidated, loadDirInfo, isRemote]);
+
+  // For local sessions, always load branches when path changes
+  useEffect(() => {
+    if (!isRemote && path.trim()) {
+      loadDirInfo(path);
+    }
+  }, [path, isRemote]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Debounced branch search
   const handleBranchSearch = useCallback(
@@ -78,6 +108,26 @@ export function NewSessionDialog({
     },
     [path, selectedHostId]
   );
+
+  // Auto-open path browser when remote host is selected and path not yet validated
+  useEffect(() => {
+    if (isRemote && !pathValidated && !showPathBrowser && !showAddHost) {
+      setShowPathBrowser(true);
+    }
+  }, [selectedHostId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handlePathSelected = async (selectedPath: string) => {
+    setPath(selectedPath);
+    setPathValidated(true);
+    setPathError("");
+    setShowPathBrowser(false);
+    // Save as last-used path for this host
+    if (selectedHostId) {
+      api().SetHostLastPath(selectedHostId, selectedPath).catch(() => {});
+    }
+  };
+
+  const canCreate = title.trim() && (!isRemote || pathValidated);
 
   const inputStyle: React.CSSProperties = {
     width: "100%",
@@ -110,10 +160,10 @@ export function NewSessionDialog({
         justifyContent: "center",
         zIndex: 2000,
       }}
-      onClick={onCancel}
+      onMouseDown={onCancel}
     >
       <div
-        onClick={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
         style={{
           background: "var(--base)",
           border: "1px solid var(--surface0)",
@@ -133,6 +183,9 @@ export function NewSessionDialog({
           onChange={(e) => setTitle(e.target.value)}
           placeholder="fix-auth-bug"
           autoFocus
+          autoCapitalize="off"
+          autoCorrect="off"
+          spellCheck={false}
         />
 
         <label style={labelStyle}>Host</label>
@@ -166,11 +219,50 @@ export function NewSessionDialog({
         </div>
 
         <label style={labelStyle}>Directory</label>
-        <input
-          style={inputStyle}
-          value={path}
-          onChange={(e) => setPath(e.target.value)}
-        />
+        {isRemote ? (
+          <div style={{ display: "flex", gap: 8 }}>
+            <div
+              style={{
+                ...inputStyle,
+                flex: 1,
+                display: "flex",
+                alignItems: "center",
+                color: pathValidated ? "var(--text)" : "var(--overlay0)",
+                fontFamily: "monospace",
+                fontSize: 12,
+              }}
+            >
+              {pathValidated ? path : "No directory selected"}
+            </div>
+            <button
+              onClick={() => setShowPathBrowser(true)}
+              style={{
+                padding: "8px 12px",
+                background: "var(--surface0)",
+                color: "var(--text)",
+                border: "none",
+                borderRadius: 4,
+                cursor: "pointer",
+                fontSize: 13,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Browse
+            </button>
+          </div>
+        ) : (
+          <input
+            style={inputStyle}
+            value={path}
+            onChange={(e) => setPath(e.target.value)}
+            autoCapitalize="off"
+            autoCorrect="off"
+            spellCheck={false}
+          />
+        )}
+        {pathError && (
+          <div style={{ color: "var(--red)", fontSize: 12, marginTop: 4 }}>{pathError}</div>
+        )}
 
         <label style={labelStyle}>
           <input
@@ -190,6 +282,9 @@ export function NewSessionDialog({
               value={branchSearch}
               onChange={(e) => handleBranchSearch(e.target.value)}
               placeholder="Search branches..."
+              autoCapitalize="off"
+              autoCorrect="off"
+              spellCheck={false}
             />
             <select
               style={{ ...inputStyle, cursor: "pointer" }}
@@ -269,7 +364,7 @@ export function NewSessionDialog({
                 hostId: selectedHostId || undefined,
               })
             }
-            disabled={!title.trim()}
+            disabled={!canCreate}
             style={{
               padding: "8px 16px",
               background: "var(--blue)",
@@ -277,7 +372,7 @@ export function NewSessionDialog({
               border: "none",
               borderRadius: 6,
               cursor: "pointer",
-              opacity: title.trim() ? 1 : 0.5,
+              opacity: canCreate ? 1 : 0.5,
             }}
           >
             Create
@@ -299,6 +394,15 @@ export function NewSessionDialog({
               console.error("Failed to create host:", e);
             }
           }}
+        />
+      )}
+
+      {showPathBrowser && selectedHostId && (
+        <RemotePathBrowser
+          hostId={selectedHostId}
+          initialPath={selectedHost?.lastPath || "~"}
+          onSelect={handlePathSelected}
+          onCancel={() => setShowPathBrowser(false)}
         />
       )}
     </div>
