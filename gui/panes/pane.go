@@ -258,6 +258,22 @@ func (p *Pane) updateStatus(inst *session.Instance) {
 	p.statusIcon.Refresh()
 }
 
+// SendPageUp writes a PageUp escape sequence to the terminal PTY.
+// Tmux interprets this to enter/scroll copy-mode one page up.
+func (p *Pane) SendPageUp() {
+	if term := p.conn.Terminal(); term != nil {
+		term.Write([]byte("\x1b[5~"))
+	}
+}
+
+// SendPageDown writes a PageDown escape sequence to the terminal PTY.
+// Tmux interprets this to scroll copy-mode one page down.
+func (p *Pane) SendPageDown() {
+	if term := p.conn.Terminal(); term != nil {
+		term.Write([]byte("\x1b[6~"))
+	}
+}
+
 // UpdateStatus refreshes the pane header from current instance state.
 func (p *Pane) UpdateStatus() {
 	inst := p.conn.Instance()

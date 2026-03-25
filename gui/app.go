@@ -216,6 +216,16 @@ func Run(program string, autoYes bool) error {
 			}
 			rootSplit.Refresh()
 		},
+		ScrollPageUp: func() {
+			if p := paneManager.FocusedPane(); p != nil {
+				p.SendPageUp()
+			}
+		},
+		ScrollPageDown: func() {
+			if p := paneManager.FocusedPane(); p != nil {
+				p.SendPageDown()
+			}
+		},
 		Quit: func() {
 			paneManager.DisconnectAll()
 			if err := state.storage.SaveInstances(state.getInstances()); err != nil {

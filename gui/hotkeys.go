@@ -33,6 +33,8 @@ type Handlers struct {
 	PushChanges     func()
 	PauseResume     func()
 	ToggleSidebar   func()
+	ScrollPageUp    func()
+	ScrollPageDown  func()
 	Quit            func()
 }
 
@@ -65,6 +67,8 @@ func buildShortcuts(h Handlers) []shortcutDef {
 		{fyne.KeyP, h.PushChanges},
 		{fyne.KeyR, h.PauseResume},
 		{fyne.KeyB, h.ToggleSidebar},
+		{fyne.KeyPageUp, h.ScrollPageUp},
+		{fyne.KeyPageDown, h.ScrollPageDown},
 		{fyne.KeyQ, h.Quit},
 	}
 }
