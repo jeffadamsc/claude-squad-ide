@@ -1,8 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"crypto/rand"
+	"encoding/base64"
 	"fmt"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -678,6 +682,284 @@ func (api *SessionAPI) SearchRemoteBranches(hostID string, dir string, filter st
 type RemoteDirEntry struct {
 	Name  string `json:"name"`
 	IsDir bool   `json:"isDir"`
+}
+
+// DirectoryEntry represents a file or directory in a session's worktree.
+type DirectoryEntry struct {
+	Name  string `json:"name"`
+	Path  string `json:"path"`
+	IsDir bool   `json:"isDir"`
+	Size  int64  `json:"size"`
+}
+
+// resolveSessionPath resolves a relative path within a session's worktree
+// and ensures it doesn't escape via path traversal.
+func (api *SessionAPI) resolveSessionPath(inst *session.Instance, relPath string) (string, string, error) {
+	worktree := inst.GetWorktreePath()
+	if worktree == "" {
+		worktree = inst.Path
+	}
+	cleaned := filepath.Clean("/" + relPath)
+	absPath := filepath.Join(worktree, cleaned)
+	if !strings.HasPrefix(absPath, worktree) {
+		return "", "", fmt.Errorf("path outside worktree: %s", relPath)
+	}
+	return worktree, absPath, nil
+}
+
+// ListDirectory lists files and directories in a session's worktree path.
+func (api *SessionAPI) ListDirectory(sessionID string, dirPath string) ([]DirectoryEntry, error) {
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	if inst.HostID != "" {
+		return api.listDirectoryRemote(inst, dirPath)
+	}
+	return api.listDirectoryLocal(inst, dirPath)
+}
+
+func (api *SessionAPI) listDirectoryLocal(inst *session.Instance, dirPath string) ([]DirectoryEntry, error) {
+	worktree, absPath, err := api.resolveSessionPath(inst, dirPath)
+	if err != nil {
+		return nil, err
+	}
+
+	dirEntries, err := os.ReadDir(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("read directory: %w", err)
+	}
+
+	// Collect names for git check-ignore
+	var names []string
+	for _, e := range dirEntries {
+		name := e.Name()
+		if name == ".git" {
+			continue
+		}
+		names = append(names, name)
+	}
+
+	// Use git check-ignore to filter gitignored files
+	ignored := make(map[string]bool)
+	if len(names) > 0 {
+		cmd := exec.Command("git", "check-ignore", "--stdin")
+		cmd.Dir = worktree
+		cmd.Stdin = bytes.NewBufferString(strings.Join(func() []string {
+			// Build paths relative to worktree for git check-ignore
+			relDir := strings.TrimPrefix(absPath, worktree)
+			relDir = strings.TrimPrefix(relDir, "/")
+			var paths []string
+			for _, n := range names {
+				if relDir == "" {
+					paths = append(paths, n)
+				} else {
+					paths = append(paths, relDir+"/"+n)
+				}
+			}
+			return paths
+		}(), "\n") + "\n")
+		out, _ := cmd.Output() // exit code 1 means no matches, which is fine
+		for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+			if line != "" {
+				ignored[filepath.Base(line)] = true
+			}
+		}
+	}
+
+	var entries []DirectoryEntry
+	for _, e := range dirEntries {
+		name := e.Name()
+		if name == ".git" || ignored[name] {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		entryPath := dirPath
+		if entryPath == "." {
+			entryPath = name
+		} else {
+			entryPath = entryPath + "/" + name
+		}
+		entries = append(entries, DirectoryEntry{
+			Name:  name,
+			Path:  entryPath,
+			IsDir: e.IsDir(),
+			Size:  info.Size(),
+		})
+	}
+	return entries, nil
+}
+
+func (api *SessionAPI) listDirectoryRemote(inst *session.Instance, dirPath string) ([]DirectoryEntry, error) {
+	_, absPath, err := api.resolveSessionPath(inst, dirPath)
+	if err != nil {
+		return nil, err
+	}
+	worktree := inst.GetWorktreePath()
+	if worktree == "" {
+		worktree = inst.Path
+	}
+
+	client, err := api.hostManager.GetClient(inst.HostID)
+	if err != nil {
+		return nil, fmt.Errorf("connect to host: %w", err)
+	}
+	defer api.hostManager.ReleaseClient(inst.HostID)
+
+	// List all entries (files and dirs)
+	out, err := client.RunCommand(fmt.Sprintf("ls -1pA %s 2>/dev/null", shellEscape(absPath)))
+	if err != nil {
+		return nil, fmt.Errorf("list directory: %w", err)
+	}
+
+	var rawNames []string
+	var rawIsDir []bool
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line == "" {
+			continue
+		}
+		if line == ".git" || line == ".git/" {
+			continue
+		}
+		isDir := strings.HasSuffix(line, "/")
+		name := strings.TrimSuffix(line, "/")
+		if name != "" {
+			rawNames = append(rawNames, name)
+			rawIsDir = append(rawIsDir, isDir)
+		}
+	}
+
+	// Filter with git check-ignore on remote
+	ignored := make(map[string]bool)
+	if len(rawNames) > 0 {
+		relDir := strings.TrimPrefix(absPath, worktree)
+		relDir = strings.TrimPrefix(relDir, "/")
+		var paths []string
+		for _, n := range rawNames {
+			if relDir == "" {
+				paths = append(paths, n)
+			} else {
+				paths = append(paths, relDir+"/"+n)
+			}
+		}
+		ignoreInput := strings.Join(paths, "\n") + "\n"
+		ignoreOut, _ := client.RunCommand(fmt.Sprintf("cd %s && echo %s | base64 -d | git check-ignore --stdin 2>/dev/null",
+			shellEscape(worktree), shellEscape(base64.StdEncoding.EncodeToString([]byte(ignoreInput)))))
+		for _, line := range strings.Split(strings.TrimSpace(ignoreOut), "\n") {
+			if line != "" {
+				ignored[filepath.Base(line)] = true
+			}
+		}
+	}
+
+	var entries []DirectoryEntry
+	for i, name := range rawNames {
+		if ignored[name] {
+			continue
+		}
+		entryPath := dirPath
+		if entryPath == "." {
+			entryPath = name
+		} else {
+			entryPath = entryPath + "/" + name
+		}
+		entries = append(entries, DirectoryEntry{
+			Name:  name,
+			Path:  entryPath,
+			IsDir: rawIsDir[i],
+		})
+	}
+	return entries, nil
+}
+
+// ReadFile reads a file from a session's worktree.
+func (api *SessionAPI) ReadFile(sessionID string, filePath string) (string, error) {
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return "", fmt.Errorf("session %s not found", sessionID)
+	}
+
+	_, absPath, err := api.resolveSessionPath(inst, filePath)
+	if err != nil {
+		return "", err
+	}
+
+	if inst.HostID != "" {
+		client, err := api.hostManager.GetClient(inst.HostID)
+		if err != nil {
+			return "", fmt.Errorf("connect to host: %w", err)
+		}
+		defer api.hostManager.ReleaseClient(inst.HostID)
+		out, err := client.RunCommand(fmt.Sprintf("cat %s", shellEscape(absPath)))
+		if err != nil {
+			return "", fmt.Errorf("read remote file: %w", err)
+		}
+		return out, nil
+	}
+
+	// Check file size (5MB limit)
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return "", fmt.Errorf("stat file: %w", err)
+	}
+	if info.Size() > 5*1024*1024 {
+		return "", fmt.Errorf("file too large (%d bytes)", info.Size())
+	}
+
+	data, err := os.ReadFile(absPath)
+	if err != nil {
+		return "", fmt.Errorf("read file: %w", err)
+	}
+	// Reject binary files (null bytes in first 512 bytes)
+	check := data
+	if len(check) > 512 {
+		check = check[:512]
+	}
+	for _, b := range check {
+		if b == 0 {
+			return "", fmt.Errorf("binary file not supported")
+		}
+	}
+	return string(data), nil
+}
+
+// WriteFile writes contents to a file in a session's worktree.
+func (api *SessionAPI) WriteFile(sessionID string, filePath string, contents string) error {
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	_, absPath, err := api.resolveSessionPath(inst, filePath)
+	if err != nil {
+		return err
+	}
+
+	if inst.HostID != "" {
+		client, err := api.hostManager.GetClient(inst.HostID)
+		if err != nil {
+			return fmt.Errorf("connect to host: %w", err)
+		}
+		defer api.hostManager.ReleaseClient(inst.HostID)
+		encoded := base64.StdEncoding.EncodeToString([]byte(contents))
+		_, err = client.RunCommand(fmt.Sprintf("echo %s | base64 -d > %s", shellEscape(encoded), shellEscape(absPath)))
+		if err != nil {
+			return fmt.Errorf("write remote file: %w", err)
+		}
+		return nil
+	}
+
+	return os.WriteFile(absPath, []byte(contents), 0644)
 }
 
 // ListRemoteDir lists directories in a path on a remote host.
