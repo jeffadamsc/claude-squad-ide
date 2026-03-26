@@ -1,15 +1,26 @@
 # Claude Squad IDE
 
-A native desktop app that manages multiple [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini](https://github.com/google-gemini/gemini-cli) (and other local agents including [Aider](https://github.com/Aider-AI/aider)) in separate workspaces, allowing you to work on multiple tasks simultaneously.
+A native desktop app for running multiple AI coding agents in parallel without them stepping on each other's code.
+
+Works with [Claude Code](https://github.com/anthropics/claude-code), [Codex](https://github.com/openai/codex), [Gemini](https://github.com/google-gemini/gemini-cli), [Aider](https://github.com/Aider-AI/aider), and other terminal-based agents.
 
 > *Originally forked from [smtg-ai/claude-squad](https://github.com/smtg-ai/claude-squad), licensed under [AGPL-3.0](LICENSE.md).*
 
-### Highlights
-- Run multiple AI agent sessions side by side in a native GUI
-- Split panes to view several sessions at once
-- Each task gets its own isolated git workspace (worktree), so no conflicts
-- Auto-accept mode for hands-off background work
-- Create sessions with a prompt, branch, and profile in one dialog
+### The Problem
+
+When you're working across multiple repos or features, running several AI agents at once gets messy fast. They clobber each other's changes, you lose track of which agent is doing what, and context-switching between terminal windows burns time.
+
+### How Claude Squad IDE Helps
+
+**Manage all your sessions in one place.** Each agent session lives in its own panel. Split panes to watch several at once, or focus on one at a time. No more juggling terminal tabs.
+
+**Isolated git worktrees per session.** Every new session gets its own git worktree branched from the ref you choose. Agents work in parallel on the same repo without merge conflicts. This extends to submodules too — if your repo has git submodules, each session's worktree initializes them independently so cross-repo features stay isolated.
+
+**Session scope mode.** Enter a session's scope to browse and edit files in that specific worktree. See exactly what the agent changed, make manual edits, then switch back to the overview.
+
+**Remote sessions.** Spin up agent sessions on another machine over SSH. Useful when you need more compute or want to keep heavy workloads off your laptop.
+
+**Hands-off background work.** Auto-accept mode lets agents run unattended. Check back when they're done.
 
 ### Installation
 
@@ -102,7 +113,7 @@ All shortcuts use **Cmd+Shift** (macOS) or **Ctrl+Shift** (Linux/Windows) as the
 
 ### Configuration
 
-Claude Squad stores its configuration in `~/.claude-squad/config.json`. You can find the exact path by running `cs debug`.
+Claude Squad IDE stores its configuration in `~/.claude-squad/config.json`. You can find the exact path by running `cs debug`.
 
 #### Profiles
 
@@ -124,7 +135,7 @@ Profiles let you define multiple named program configurations and switch between
 | `name`    | Display name shown in the profile picker                 |
 | `program` | Shell command used to launch the agent for that profile  |
 
-If no profiles are defined, Claude Squad uses `default_program` directly as the launch command (the default is `claude`).
+If no profiles are defined, Claude Squad IDE uses `default_program` directly as the launch command (the default is `claude`).
 
 ### How It Works
 
