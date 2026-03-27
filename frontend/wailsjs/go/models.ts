@@ -110,6 +110,26 @@ export namespace app {
 	        this.scope = source["scope"];
 	    }
 	}
+	export class DiffFileResult {
+	    path: string;
+	    oldContent: string;
+	    newContent: string;
+	    status: string;
+	    submodule: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new DiffFileResult(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.path = source["path"];
+	        this.oldContent = source["oldContent"];
+	        this.newContent = source["newContent"];
+	        this.status = source["status"];
+	        this.submodule = source["submodule"];
+	    }
+	}
 	export class DiffStats {
 	    added: number;
 	    removed: number;

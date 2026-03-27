@@ -19,6 +19,8 @@ export function GetAllSymbols(arg1:string):Promise<Record<string, Array<app.Defi
 
 export function GetConfig():Promise<app.AppConfig>;
 
+export function GetDiffFiles(arg1:string):Promise<Array<app.DiffFileResult>>;
+
 export function GetDirInfo(arg1:string):Promise<app.DirInfo>;
 
 export function GetHosts():Promise<Array<app.HostInfo>>;

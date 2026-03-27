@@ -34,6 +34,10 @@ export function GetConfig() {
   return window['go']['app']['SessionAPI']['GetConfig']();
 }
 
+export function GetDiffFiles(arg1) {
+  return window['go']['app']['SessionAPI']['GetDiffFiles'](arg1);
+}
+
 export function GetDirInfo(arg1) {
   return window['go']['app']['SessionAPI']['GetDirInfo'](arg1);
 }
