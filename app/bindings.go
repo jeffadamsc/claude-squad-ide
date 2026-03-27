@@ -61,6 +61,14 @@ type DiffStats struct {
 	Removed int `json:"removed"`
 }
 
+type DiffFileResult struct {
+	Path       string `json:"path"`
+	OldContent string `json:"oldContent"`
+	NewContent string `json:"newContent"`
+	Status     string `json:"status"`
+	Submodule  string `json:"submodule"`
+}
+
 type SessionAPI struct {
 	mu            sync.RWMutex
 	ctx           context.Context // Wails app context for native dialogs
@@ -1217,6 +1225,41 @@ func resolveTilde(client *sshPkg.Client, dir string) (string, error) {
 
 func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\"'\"'") + "'"
+}
+
+// GetDiffFiles returns all changed files for a session, including submodules.
+func (api *SessionAPI) GetDiffFiles(sessionID string) ([]DiffFileResult, error) {
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", sessionID)
+	}
+
+	gw, err := inst.GetGitWorktree()
+	if err != nil {
+		return nil, fmt.Errorf("get git worktree: %w", err)
+	}
+	if gw == nil {
+		return nil, fmt.Errorf("session has no git worktree (in-place session)")
+	}
+
+	gitFiles, err := gw.GetDiffFilesWithSubmodules()
+	if err != nil {
+		return nil, fmt.Errorf("get diff files: %w", err)
+	}
+
+	results := make([]DiffFileResult, len(gitFiles))
+	for i, f := range gitFiles {
+		results[i] = DiffFileResult{
+			Path:       f.Path,
+			OldContent: f.OldContent,
+			NewContent: f.NewContent,
+			Status:     f.Status,
+			Submodule:  f.Submodule,
+		}
+	}
+	return results, nil
 }
 
 func generateAppUUID() string {
