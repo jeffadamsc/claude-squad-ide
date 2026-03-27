@@ -25,7 +25,7 @@ export function QuickOpen({ sessionId }: { sessionId: string }) {
     const list = listRef.current;
     if (!list) return;
     const item = list.children[selectedIdx] as HTMLElement | undefined;
-    item?.scrollIntoView({ block: "nearest" });
+    if (item?.scrollIntoView) item.scrollIntoView({ block: "nearest" });
   }, [selectedIdx]);
 
   const close = useCallback(() => {
