@@ -27,13 +27,19 @@ export function GetSessionStatus(arg1:string):Promise<app.SessionStatus>;
 
 export function GetWebSocketPort():Promise<number>;
 
+export function IndexSession(arg1:string):Promise<void>;
+
 export function KillSession(arg1:string):Promise<void>;
 
 export function ListDirectory(arg1:string,arg2:string):Promise<Array<app.DirectoryEntry>>;
 
+export function ListFiles(arg1:string):Promise<Array<string>>;
+
 export function ListRemoteDir(arg1:string,arg2:string):Promise<Array<app.RemoteDirEntry>>;
 
 export function LoadSessions():Promise<Array<app.SessionInfo>>;
+
+export function LookupSymbol(arg1:string,arg2:string):Promise<Array<app.Definition>>;
 
 export function OpenSession(arg1:string):Promise<string>;
 
@@ -58,6 +64,8 @@ export function SetContext(arg1:context.Context):Promise<void>;
 export function SetHostLastPath(arg1:string,arg2:string):Promise<void>;
 
 export function StartSession(arg1:string):Promise<void>;
+
+export function StopIndexer(arg1:string):Promise<void>;
 
 export function TestHost(arg1:app.CreateHostOptions,arg2:string):Promise<app.TestHostResult>;
 

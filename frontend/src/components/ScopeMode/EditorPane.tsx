@@ -1,9 +1,10 @@
 import { useRef, useEffect, useCallback } from "react";
 import Editor, { type OnMount } from "@monaco-editor/react";
-import { useSessionStore } from "../../store/sessionStore";
+import { useSessionStore, detectLanguage } from "../../store/sessionStore";
 import { EditorTabBar } from "./EditorTabBar";
 import { catppuccinMocha } from "../../lib/monacoTheme";
 import { api } from "../../lib/wails";
+import { registerDefinitionProvider } from "../../lib/definitionProvider";
 
 interface EditorPaneProps {
   sessionId: string;
@@ -19,14 +20,48 @@ export function EditorPane({ sessionId }: EditorPaneProps) {
   const pendingSaveRef = useRef<{ path: string; contents: string } | null>(
     null
   );
+  const definitionProviderRef = useRef<{ dispose: () => void } | null>(null);
 
   const activeFile = openEditorFiles.find(
     (f) => f.path === activeEditorFile
   );
 
-  const handleMount: OnMount = (_editor, monaco) => {
+  const handleMount: OnMount = (editor, monaco) => {
     monaco.editor.defineTheme("catppuccin-mocha", catppuccinMocha);
     monaco.editor.setTheme("catppuccin-mocha");
+
+    // Register definition provider for go-to-definition
+    if (definitionProviderRef.current) {
+      definitionProviderRef.current.dispose();
+    }
+    definitionProviderRef.current = registerDefinitionProvider(
+      monaco,
+      sessionId
+    );
+
+    // When Monaco navigates to a definition in another file, open it in tabs
+    editor.onDidChangeModel(() => {
+      const model = editor.getModel();
+      if (model) {
+        const filePath = model.uri.path.startsWith("/")
+          ? model.uri.path.slice(1)
+          : model.uri.path;
+        const store = useSessionStore.getState();
+        const existing = store.openEditorFiles.find(
+          (f) => f.path === filePath
+        );
+        if (existing) {
+          store.setActiveEditorFile(filePath);
+        } else {
+          // File opened via go-to-definition — add to editor tabs
+          store.openEditorFile(
+            filePath,
+            model.getValue(),
+            detectLanguage(filePath)
+          );
+        }
+      }
+    });
   };
 
   const flushSave = useCallback(() => {
@@ -53,7 +88,7 @@ export function EditorPane({ sessionId }: EditorPaneProps) {
     [activeFile, updateEditorFileContents, flushSave]
   );
 
-  // Flush pending save on unmount
+  // Flush pending save and clean up definition provider on unmount
   useEffect(() => {
     return () => {
       clearTimeout(saveTimerRef.current);
@@ -62,6 +97,10 @@ export function EditorPane({ sessionId }: EditorPaneProps) {
         api()
           .WriteFile(sessionId, path, contents)
           .catch(console.error);
+      }
+      if (definitionProviderRef.current) {
+        definitionProviderRef.current.dispose();
+        definitionProviderRef.current = null;
       }
     };
   }, [sessionId]);
@@ -115,6 +154,10 @@ export function EditorPane({ sessionId }: EditorPaneProps) {
             wordWrap: "off",
             bracketPairColorization: { enabled: true },
             padding: { top: 8 },
+            gotoLocation: {
+              multiple: "peek",
+              multipleDefinitions: "peek",
+            },
           }}
         />
       </div>

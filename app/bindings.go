@@ -74,6 +74,7 @@ type SessionAPI struct {
 	hostManager   *sshPkg.HostManager
 	hostStore     *sshPkg.HostStore
 	keychainStore *sshPkg.KeychainStore
+	indexers      map[string]*SessionIndexer
 }
 
 func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
@@ -111,6 +112,7 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 		hostManager:   hostMgr,
 		hostStore:     hostStore,
 		keychainStore: keychainStore,
+		indexers:      make(map[string]*SessionIndexer),
 	}
 
 	// Load persisted sessions as metadata. Sessions that were running when
@@ -528,6 +530,10 @@ func (api *SessionAPI) GetConfig() (*AppConfig, error) {
 func (api *SessionAPI) Close() {
 	api.mu.Lock()
 	defer api.mu.Unlock()
+
+	for _, idx := range api.indexers {
+		idx.Stop()
+	}
 
 	// Only save state if we actually modified something
 	api.saveInstancesLocked()
@@ -988,7 +994,119 @@ func (api *SessionAPI) WriteFile(sessionID string, filePath string, contents str
 		return nil
 	}
 
-	return os.WriteFile(absPath, []byte(contents), 0644)
+	if err := os.WriteFile(absPath, []byte(contents), 0644); err != nil {
+		return err
+	}
+
+	// Trigger index refresh after file write
+	api.mu.RLock()
+	if idx, ok := api.indexers[sessionID]; ok {
+		idx.Refresh()
+	}
+	api.mu.RUnlock()
+	return nil
+}
+
+// ListFiles returns all git-tracked files in the session's worktree.
+func (api *SessionAPI) ListFiles(sessionID string) ([]string, error) {
+	api.mu.RLock()
+	defer api.mu.RUnlock()
+
+	// Use indexer cache if available
+	if idx, ok := api.indexers[sessionID]; ok {
+		files := idx.Files()
+		if files != nil {
+			return files, nil
+		}
+	}
+
+	inst, ok := api.instances[sessionID]
+	if !ok {
+		return nil, fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	if inst.HostID != "" {
+		return api.listFilesRemote(inst)
+	}
+
+	worktree := inst.GetWorktreePath()
+	if worktree == "" {
+		worktree = inst.Path
+	}
+	return listFilesInWorktree(worktree)
+}
+
+// listFilesRemote runs git ls-files on a remote host via SSH.
+func (api *SessionAPI) listFilesRemote(inst *session.Instance) ([]string, error) {
+	client, err := api.hostManager.GetClient(inst.HostID)
+	if err != nil {
+		return nil, fmt.Errorf("SSH connect: %w", err)
+	}
+	defer api.hostManager.ReleaseClient(inst.HostID)
+
+	path := shellEscape(inst.Path)
+	out, err := client.RunCommand(fmt.Sprintf("cd %s && git ls-files", path))
+	if err != nil {
+		return nil, fmt.Errorf("remote git ls-files: %w", err)
+	}
+	raw := strings.TrimSpace(out)
+	if raw == "" {
+		return nil, nil
+	}
+	return strings.Split(raw, "\n"), nil
+}
+
+// IndexSession starts or restarts the indexer for a scoped session.
+func (api *SessionAPI) IndexSession(sessionID string) error {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+
+	// Stop existing indexer if any
+	if idx, ok := api.indexers[sessionID]; ok {
+		idx.Stop()
+	}
+
+	inst, ok := api.instances[sessionID]
+	if !ok {
+		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	// Remote sessions: not yet supported for indexing
+	if inst.HostID != "" {
+		return nil
+	}
+
+	worktree := inst.GetWorktreePath()
+	if worktree == "" {
+		worktree = inst.Path
+	}
+
+	idx := NewSessionIndexer(worktree)
+	idx.Start()
+	api.indexers[sessionID] = idx
+	return nil
+}
+
+// StopIndexer stops the indexer for a session (called on scope exit).
+func (api *SessionAPI) StopIndexer(sessionID string) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	if idx, ok := api.indexers[sessionID]; ok {
+		idx.Stop()
+		delete(api.indexers, sessionID)
+	}
+}
+
+// LookupSymbol returns definitions for a symbol name in the scoped session.
+func (api *SessionAPI) LookupSymbol(sessionID string, symbol string) ([]Definition, error) {
+	api.mu.RLock()
+	defer api.mu.RUnlock()
+
+	idx, ok := api.indexers[sessionID]
+	if !ok {
+		return nil, nil
+	}
+	return idx.Lookup(symbol), nil
 }
 
 // ListRemoteDir lists directories in a path on a remote host.

@@ -39,6 +39,8 @@ interface SessionState {
   explorerTree: Map<string, DirectoryEntry[]>;
   openEditorFiles: EditorFile[];
   activeEditorFile: string | null;
+  fileList: string[];
+  quickOpenVisible: boolean;
 
   setSessions: (sessions: SessionInfo[]) => void;
   updateStatuses: (statuses: SessionStatus[]) => void;
@@ -63,6 +65,9 @@ interface SessionState {
   closeEditorFile: (path: string) => void;
   setActiveEditorFile: (path: string) => void;
   updateEditorFileContents: (path: string, contents: string) => void;
+  setFileList: (files: string[]) => void;
+  setQuickOpenVisible: (visible: boolean) => void;
+  toggleQuickOpen: () => void;
 }
 
 const extToLanguage: Record<string, string> = {
@@ -101,6 +106,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   explorerTree: new Map(),
   openEditorFiles: [],
   activeEditorFile: null,
+  fileList: [],
+  quickOpenVisible: false,
 
   setSessions: (sessions) => set({ sessions }),
 
@@ -224,6 +231,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         explorerTree: new Map(),
         openEditorFiles: [],
         activeEditorFile: null,
+        fileList: [],
+        quickOpenVisible: false,
         ...(snapshot
           ? {
               activeTabId: snapshot.activeTabId,
@@ -272,4 +281,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         f.path === path ? { ...f, contents } : f
       ),
     })),
+
+  setFileList: (files) => set({ fileList: files }),
+  setQuickOpenVisible: (visible) => set({ quickOpenVisible: visible }),
+  toggleQuickOpen: () => set((state) => ({ quickOpenVisible: !state.quickOpenVisible })),
 }));

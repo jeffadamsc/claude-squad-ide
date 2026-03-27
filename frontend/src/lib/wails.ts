@@ -72,6 +72,15 @@ export interface DirInfo {
   branches: string[];
 }
 
+export interface SymbolDefinition {
+  name: string;
+  path: string;
+  line: number;
+  kind: string;
+  language: string;
+  scope: string;
+}
+
 export interface AppConfig {
   DefaultProgram: string;
   AutoYes: boolean;
@@ -112,6 +121,10 @@ declare global {
           ListDirectory(sessionId: string, dirPath: string): Promise<DirectoryEntry[]>;
           ReadFile(sessionId: string, filePath: string): Promise<string>;
           WriteFile(sessionId: string, filePath: string, contents: string): Promise<void>;
+          ListFiles(sessionId: string): Promise<string[]>;
+          IndexSession(sessionId: string): Promise<void>;
+          StopIndexer(sessionId: string): Promise<void>;
+          LookupSymbol(sessionId: string, symbol: string): Promise<SymbolDefinition[]>;
         };
       };
     };

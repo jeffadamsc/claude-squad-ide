@@ -19,6 +19,16 @@ export function useHotkeys(actions: HotkeyActions) {
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      // Cmd+P (no shift) — Quick Open in scope mode
+      if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key === "p") {
+        const state = useSessionStore.getState();
+        if (state.scopeMode.active) {
+          e.preventDefault();
+          state.toggleQuickOpen();
+          return;
+        }
+      }
+
       if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
 
       switch (e.key) {

@@ -114,6 +114,7 @@ func newTestAPI(t *testing.T) *SessionAPI {
 		hostManager:   hostMgr,
 		hostStore:     hostStore,
 		keychainStore: keychainStore,
+		indexers:      make(map[string]*SessionIndexer),
 	}
 	t.Cleanup(func() { api.Close() })
 	return api

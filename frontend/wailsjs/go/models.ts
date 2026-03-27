@@ -88,6 +88,28 @@ export namespace app {
 	        this.hostId = source["hostId"];
 	    }
 	}
+	export class Definition {
+	    name: string;
+	    path: string;
+	    line: number;
+	    kind: string;
+	    language: string;
+	    scope: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new Definition(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.name = source["name"];
+	        this.path = source["path"];
+	        this.line = source["line"];
+	        this.kind = source["kind"];
+	        this.language = source["language"];
+	        this.scope = source["scope"];
+	    }
+	}
 	export class DiffStats {
 	    added: number;
 	    removed: number;

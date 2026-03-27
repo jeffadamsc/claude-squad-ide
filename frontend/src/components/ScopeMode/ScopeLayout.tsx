@@ -6,6 +6,8 @@ import { ScopeSidebar } from "./ScopeSidebar";
 import { FileExplorer } from "./FileExplorer";
 import { EditorPane } from "./EditorPane";
 import { ClaudeTerminal } from "./ClaudeTerminal";
+import { QuickOpen } from "./QuickOpen";
+import { api } from "../../lib/wails";
 
 interface ScopeLayoutProps {
   wsPort: number;
@@ -16,6 +18,7 @@ export function ScopeLayout({ wsPort }: ScopeLayoutProps) {
   const tabs = useSessionStore((s) => s.tabs);
   const sessions = useSessionStore((s) => s.sessions);
   const exitScopeMode = useSessionStore((s) => s.exitScopeMode);
+  const setFileList = useSessionStore((s) => s.setFileList);
 
   const sessionId = scopeMode.sessionId;
   const tab = tabs.find((t) => t.sessionId === sessionId);
@@ -26,6 +29,32 @@ export function ScopeLayout({ wsPort }: ScopeLayoutProps) {
       exitScopeMode();
     }
   }, [sessions, sessionId, exitScopeMode]);
+
+  // Load file list and start indexer on scope entry
+  useEffect(() => {
+    if (!sessionId) return;
+
+    api()
+      .ListFiles(sessionId)
+      .then((files) => {
+        if (files) setFileList(files);
+      });
+
+    api().IndexSession(sessionId);
+
+    const interval = setInterval(() => {
+      api()
+        .ListFiles(sessionId)
+        .then((files) => {
+          if (files) setFileList(files);
+        });
+    }, 10000);
+
+    return () => {
+      clearInterval(interval);
+      api().StopIndexer(sessionId);
+    };
+  }, [sessionId, setFileList]);
 
   if (!sessionId || !tab) {
     return (
@@ -46,6 +75,7 @@ export function ScopeLayout({ wsPort }: ScopeLayoutProps) {
   return (
     <div style={{ display: "flex", height: "100%", flex: 1 }}>
       <ScopeSidebar />
+      {sessionId && <QuickOpen sessionId={sessionId} />}
       <Allotment>
         <Allotment.Pane preferredSize={200} minSize={150} maxSize={350}>
           <FileExplorer sessionId={sessionId} />

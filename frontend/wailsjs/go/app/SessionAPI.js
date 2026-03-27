@@ -50,6 +50,10 @@ export function GetWebSocketPort() {
   return window['go']['app']['SessionAPI']['GetWebSocketPort']();
 }
 
+export function IndexSession(arg1) {
+  return window['go']['app']['SessionAPI']['IndexSession'](arg1);
+}
+
 export function KillSession(arg1) {
   return window['go']['app']['SessionAPI']['KillSession'](arg1);
 }
@@ -58,12 +62,20 @@ export function ListDirectory(arg1, arg2) {
   return window['go']['app']['SessionAPI']['ListDirectory'](arg1, arg2);
 }
 
+export function ListFiles(arg1) {
+  return window['go']['app']['SessionAPI']['ListFiles'](arg1);
+}
+
 export function ListRemoteDir(arg1, arg2) {
   return window['go']['app']['SessionAPI']['ListRemoteDir'](arg1, arg2);
 }
 
 export function LoadSessions() {
   return window['go']['app']['SessionAPI']['LoadSessions']();
+}
+
+export function LookupSymbol(arg1, arg2) {
+  return window['go']['app']['SessionAPI']['LookupSymbol'](arg1, arg2);
 }
 
 export function OpenSession(arg1) {
@@ -112,6 +124,10 @@ export function SetHostLastPath(arg1, arg2) {
 
 export function StartSession(arg1) {
   return window['go']['app']['SessionAPI']['StartSession'](arg1);
+}
+
+export function StopIndexer(arg1) {
+  return window['go']['app']['SessionAPI']['StopIndexer'](arg1);
 }
 
 export function TestHost(arg1, arg2) {
