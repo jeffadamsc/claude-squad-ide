@@ -135,6 +135,11 @@ declare global {
           LookupSymbol(sessionId: string, symbol: string): Promise<SymbolDefinition[]>;
           GetAllSymbols(sessionId: string): Promise<Record<string, SymbolDefinition[]> | null>;
           GetDiffFiles(sessionId: string): Promise<DiffFile[]>;
+          CreateFile(sessionId: string, filePath: string): Promise<void>;
+          CreateDirectory(sessionId: string, dirPath: string): Promise<void>;
+          DeletePath(sessionId: string, targetPath: string): Promise<void>;
+          RenamePath(sessionId: string, oldPath: string, newPath: string): Promise<void>;
+          CopyPath(sessionId: string, srcPath: string, destPath: string): Promise<void>;
         };
       };
     };

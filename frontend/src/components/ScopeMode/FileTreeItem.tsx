@@ -7,6 +7,7 @@ interface FileTreeItemProps {
   expanded?: boolean;
   selected?: boolean;
   onClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }
 
 export function FileTreeItem({
@@ -16,12 +17,14 @@ export function FileTreeItem({
   expanded,
   selected,
   onClick,
+  onContextMenu,
 }: FileTreeItemProps) {
   const [hovered, setHovered] = useState(false);
 
   return (
     <div
       onClick={onClick}
+      onContextMenu={onContextMenu}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
       style={{

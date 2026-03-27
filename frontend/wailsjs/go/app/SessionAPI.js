@@ -10,6 +10,18 @@ export function Close() {
   return window['go']['app']['SessionAPI']['Close']();
 }
 
+export function CopyPath(arg1, arg2, arg3) {
+  return window['go']['app']['SessionAPI']['CopyPath'](arg1, arg2, arg3);
+}
+
+export function CreateDirectory(arg1, arg2) {
+  return window['go']['app']['SessionAPI']['CreateDirectory'](arg1, arg2);
+}
+
+export function CreateFile(arg1, arg2) {
+  return window['go']['app']['SessionAPI']['CreateFile'](arg1, arg2);
+}
+
 export function CreateHost(arg1) {
   return window['go']['app']['SessionAPI']['CreateHost'](arg1);
 }
@@ -20,6 +32,10 @@ export function CreateSession(arg1) {
 
 export function DeleteHost(arg1) {
   return window['go']['app']['SessionAPI']['DeleteHost'](arg1);
+}
+
+export function DeletePath(arg1, arg2) {
+  return window['go']['app']['SessionAPI']['DeletePath'](arg1, arg2);
 }
 
 export function DeleteSession(arg1) {
@@ -100,6 +116,10 @@ export function PollAllStatuses() {
 
 export function ReadFile(arg1, arg2) {
   return window['go']['app']['SessionAPI']['ReadFile'](arg1, arg2);
+}
+
+export function RenamePath(arg1, arg2, arg3) {
+  return window['go']['app']['SessionAPI']['RenamePath'](arg1, arg2, arg3);
 }
 
 export function ResumeSession(arg1) {

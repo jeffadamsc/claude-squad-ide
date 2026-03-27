@@ -7,11 +7,19 @@ export function CheckRemoteGitRepo(arg1:string,arg2:string):Promise<boolean>;
 
 export function Close():Promise<void>;
 
+export function CopyPath(arg1:string,arg2:string,arg3:string):Promise<void>;
+
+export function CreateDirectory(arg1:string,arg2:string):Promise<void>;
+
+export function CreateFile(arg1:string,arg2:string):Promise<void>;
+
 export function CreateHost(arg1:app.CreateHostOptions):Promise<app.HostInfo>;
 
 export function CreateSession(arg1:app.CreateOptions):Promise<app.SessionInfo>;
 
 export function DeleteHost(arg1:string):Promise<void>;
+
+export function DeletePath(arg1:string,arg2:string):Promise<void>;
 
 export function DeleteSession(arg1:string):Promise<void>;
 
@@ -52,6 +60,8 @@ export function PauseSession(arg1:string):Promise<void>;
 export function PollAllStatuses():Promise<Array<app.SessionStatus>>;
 
 export function ReadFile(arg1:string,arg2:string):Promise<string>;
+
+export function RenamePath(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function ResumeSession(arg1:string):Promise<void>;
 

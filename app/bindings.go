@@ -1270,6 +1270,180 @@ func generateAppUUID() string {
 	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
+// CreateFile creates a new empty file (or with provided contents) in a session's worktree.
+func (api *SessionAPI) CreateFile(sessionID string, filePath string) error {
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	_, absPath, err := api.resolveSessionPath(inst, filePath)
+	if err != nil {
+		return err
+	}
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(absPath), 0755); err != nil {
+		return fmt.Errorf("create parent directory: %w", err)
+	}
+
+	// Fail if file already exists
+	if _, err := os.Stat(absPath); err == nil {
+		return fmt.Errorf("file already exists: %s", filePath)
+	}
+
+	if err := os.WriteFile(absPath, []byte{}, 0644); err != nil {
+		return fmt.Errorf("create file: %w", err)
+	}
+
+	api.mu.RLock()
+	if idx, ok := api.indexers[sessionID]; ok {
+		idx.Refresh()
+	}
+	api.mu.RUnlock()
+	return nil
+}
+
+// CreateDirectory creates a new directory in a session's worktree.
+func (api *SessionAPI) CreateDirectory(sessionID string, dirPath string) error {
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	_, absPath, err := api.resolveSessionPath(inst, dirPath)
+	if err != nil {
+		return err
+	}
+
+	if _, err := os.Stat(absPath); err == nil {
+		return fmt.Errorf("path already exists: %s", dirPath)
+	}
+
+	if err := os.MkdirAll(absPath, 0755); err != nil {
+		return fmt.Errorf("create directory: %w", err)
+	}
+
+	return nil
+}
+
+// DeletePath deletes a file or directory in a session's worktree.
+func (api *SessionAPI) DeletePath(sessionID string, targetPath string) error {
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	_, absPath, err := api.resolveSessionPath(inst, targetPath)
+	if err != nil {
+		return err
+	}
+
+	if err := os.RemoveAll(absPath); err != nil {
+		return fmt.Errorf("delete path: %w", err)
+	}
+
+	api.mu.RLock()
+	if idx, ok := api.indexers[sessionID]; ok {
+		idx.Refresh()
+	}
+	api.mu.RUnlock()
+	return nil
+}
+
+// RenamePath renames a file or directory in a session's worktree.
+func (api *SessionAPI) RenamePath(sessionID string, oldPath string, newPath string) error {
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	_, absOld, err := api.resolveSessionPath(inst, oldPath)
+	if err != nil {
+		return err
+	}
+	_, absNew, err := api.resolveSessionPath(inst, newPath)
+	if err != nil {
+		return err
+	}
+
+	// Ensure parent of destination exists
+	if err := os.MkdirAll(filepath.Dir(absNew), 0755); err != nil {
+		return fmt.Errorf("create parent directory: %w", err)
+	}
+
+	if err := os.Rename(absOld, absNew); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+
+	api.mu.RLock()
+	if idx, ok := api.indexers[sessionID]; ok {
+		idx.Refresh()
+	}
+	api.mu.RUnlock()
+	return nil
+}
+
+// CopyPath copies a file or directory in a session's worktree.
+func (api *SessionAPI) CopyPath(sessionID string, srcPath string, destPath string) error {
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+
+	_, absSrc, err := api.resolveSessionPath(inst, srcPath)
+	if err != nil {
+		return err
+	}
+	_, absDest, err := api.resolveSessionPath(inst, destPath)
+	if err != nil {
+		return err
+	}
+
+	// Ensure parent of destination exists
+	if err := os.MkdirAll(filepath.Dir(absDest), 0755); err != nil {
+		return fmt.Errorf("create parent directory: %w", err)
+	}
+
+	info, err := os.Stat(absSrc)
+	if err != nil {
+		return fmt.Errorf("stat source: %w", err)
+	}
+
+	if info.IsDir() {
+		// Use cp -R for directory copy
+		cmd := exec.Command("cp", "-R", absSrc, absDest)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("copy directory: %s: %w", string(out), err)
+		}
+	} else {
+		data, err := os.ReadFile(absSrc)
+		if err != nil {
+			return fmt.Errorf("read source: %w", err)
+		}
+		if err := os.WriteFile(absDest, data, info.Mode()); err != nil {
+			return fmt.Errorf("write destination: %w", err)
+		}
+	}
+
+	api.mu.RLock()
+	if idx, ok := api.indexers[sessionID]; ok {
+		idx.Refresh()
+	}
+	api.mu.RUnlock()
+	return nil
+}
+
 // saveInstancesLocked persists all instances to disk. Must be called with api.mu held.
 // Only writes if instances have been modified (dirty flag).
 func (api *SessionAPI) saveInstancesLocked() {

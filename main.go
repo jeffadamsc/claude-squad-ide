@@ -73,6 +73,12 @@ var (
 				Bind: []interface{}{
 					api,
 				},
+				DragAndDrop: &options.DragAndDrop{
+					EnableFileDrop:     true,
+					DisableWebViewDrop: false,
+					CSSDropProperty:    "--wails-drop-target",
+					CSSDropValue:       "drop",
+				},
 				OnStartup: func(ctx context.Context) {
 					api.SetContext(ctx)
 				},
