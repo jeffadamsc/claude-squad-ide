@@ -4,6 +4,7 @@ claude-squad
 **.DS_Store
 cs
 .superpowers/
+.worktrees/
 build/*
 !build/appicon.png
 !build/darwin/
