@@ -20,6 +20,8 @@ beforeEach(() => {
     pendingReveal: null,
     fileList: [],
     quickOpenVisible: false,
+    diffFiles: [],
+    diffLoading: false,
   });
 });
 
@@ -295,5 +297,61 @@ describe("hosts", () => {
 
     store.removeHost("h1");
     expect(useSessionStore.getState().hosts).toHaveLength(0);
+  });
+});
+
+describe("diff tab management", () => {
+  it("openDiffTab creates a diff tab with __diff__ path", () => {
+    const { openDiffTab } = useSessionStore.getState();
+    openDiffTab();
+    const state = useSessionStore.getState();
+    expect(state.openEditorFiles).toHaveLength(1);
+    expect(state.openEditorFiles[0].type).toBe("diff");
+    expect(state.openEditorFiles[0].path).toBe("__diff__");
+    expect(state.activeEditorFile).toBe("__diff__");
+  });
+
+  it("openDiffTab switches to existing diff tab", () => {
+    const store = useSessionStore.getState();
+    store.openDiffTab();
+    store.openEditorFile("test.go", "content", "go");
+    expect(useSessionStore.getState().activeEditorFile).toBe("test.go");
+    useSessionStore.getState().openDiffTab();
+    expect(useSessionStore.getState().activeEditorFile).toBe("__diff__");
+    expect(useSessionStore.getState().openEditorFiles).toHaveLength(2);
+  });
+
+  it("clearDiffFiles resets diff state", () => {
+    useSessionStore.setState({
+      diffFiles: [
+        { path: "a", oldContent: "", newContent: "", status: "added" as const, submodule: "" },
+      ],
+      diffLoading: true,
+    });
+    useSessionStore.getState().clearDiffFiles();
+    const state = useSessionStore.getState();
+    expect(state.diffFiles).toHaveLength(0);
+    expect(state.diffLoading).toBe(false);
+  });
+
+  it("openEditorFile defaults type to file", () => {
+    useSessionStore.getState().openEditorFile("test.go", "content", "go");
+    const f = useSessionStore.getState().openEditorFiles[0];
+    expect(f.type).toBe("file");
+  });
+
+  it("exitScopeMode clears diff state", () => {
+    const store = useSessionStore.getState();
+    store.enterScopeMode("s1");
+    useSessionStore.setState({
+      diffFiles: [
+        { path: "a", oldContent: "", newContent: "", status: "modified" as const, submodule: "" },
+      ],
+      diffLoading: true,
+    });
+    useSessionStore.getState().exitScopeMode();
+    const state = useSessionStore.getState();
+    expect(state.diffFiles).toHaveLength(0);
+    expect(state.diffLoading).toBe(false);
   });
 });

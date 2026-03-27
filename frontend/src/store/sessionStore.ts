@@ -1,5 +1,6 @@
 import { create } from "zustand";
-import type { SessionInfo, SessionStatus, HostInfo, DirectoryEntry } from "../lib/wails";
+import type { SessionInfo, SessionStatus, HostInfo, DirectoryEntry, DiffFile } from "../lib/wails";
+import { api } from "../lib/wails";
 
 interface Tab {
   id: string;
@@ -12,6 +13,7 @@ interface EditorFile {
   path: string;
   contents: string;
   language: string;
+  type: "file" | "diff";
 }
 
 interface ScopeMode {
@@ -42,6 +44,8 @@ interface SessionState {
   pendingReveal: { line: number; column: number } | null;
   fileList: string[];
   quickOpenVisible: boolean;
+  diffFiles: DiffFile[];
+  diffLoading: boolean;
 
   setSessions: (sessions: SessionInfo[]) => void;
   updateStatuses: (statuses: SessionStatus[]) => void;
@@ -70,6 +74,9 @@ interface SessionState {
   setFileList: (files: string[]) => void;
   setQuickOpenVisible: (visible: boolean) => void;
   toggleQuickOpen: () => void;
+  fetchDiffFiles: (sessionId: string) => Promise<void>;
+  clearDiffFiles: () => void;
+  openDiffTab: () => void;
 }
 
 const extToLanguage: Record<string, string> = {
@@ -111,6 +118,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   pendingReveal: null,
   fileList: [],
   quickOpenVisible: false,
+  diffFiles: [],
+  diffLoading: false,
 
   setSessions: (sessions) => set({ sessions }),
 
@@ -237,6 +246,8 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         pendingReveal: null,
         fileList: [],
         quickOpenVisible: false,
+        diffFiles: [],
+        diffLoading: false,
         ...(snapshot
           ? {
               activeTabId: snapshot.activeTabId,
@@ -260,7 +271,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
       const existing = state.openEditorFiles.find((f) => f.path === path);
       if (existing) return { activeEditorFile: path };
       return {
-        openEditorFiles: [...state.openEditorFiles, { path, contents, language }],
+        openEditorFiles: [...state.openEditorFiles, { path, contents, language, type: "file" }],
         activeEditorFile: path,
       };
     }),
@@ -291,4 +302,30 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   setFileList: (files) => set({ fileList: files }),
   setQuickOpenVisible: (visible) => set({ quickOpenVisible: visible }),
   toggleQuickOpen: () => set((state) => ({ quickOpenVisible: !state.quickOpenVisible })),
+
+  fetchDiffFiles: async (sessionId) => {
+    set({ diffLoading: true });
+    try {
+      const files = await api().GetDiffFiles(sessionId);
+      set({ diffFiles: files ?? [], diffLoading: false });
+    } catch (err) {
+      console.error("Failed to fetch diff files:", err);
+      set({ diffLoading: false });
+    }
+  },
+
+  clearDiffFiles: () => set({ diffFiles: [], diffLoading: false }),
+
+  openDiffTab: () =>
+    set((state) => {
+      const existing = state.openEditorFiles.find((f) => f.type === "diff");
+      if (existing) return { activeEditorFile: existing.path };
+      return {
+        openEditorFiles: [
+          ...state.openEditorFiles,
+          { path: "__diff__", contents: "", language: "plaintext", type: "diff" },
+        ],
+        activeEditorFile: "__diff__",
+      };
+    }),
 }));

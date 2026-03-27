@@ -81,6 +81,14 @@ export interface SymbolDefinition {
   scope: string;
 }
 
+export interface DiffFile {
+  path: string;
+  oldContent: string;
+  newContent: string;
+  status: "added" | "modified" | "deleted";
+  submodule: string;
+}
+
 export interface AppConfig {
   DefaultProgram: string;
   AutoYes: boolean;
@@ -126,6 +134,7 @@ declare global {
           StopIndexer(sessionId: string): Promise<void>;
           LookupSymbol(sessionId: string, symbol: string): Promise<SymbolDefinition[]>;
           GetAllSymbols(sessionId: string): Promise<Record<string, SymbolDefinition[]> | null>;
+          GetDiffFiles(sessionId: string): Promise<DiffFile[]>;
         };
       };
     };
