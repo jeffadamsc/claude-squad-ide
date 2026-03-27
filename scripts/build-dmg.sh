@@ -43,6 +43,10 @@ if [ ! -f "$APP_BUNDLE/Contents/MacOS/cs" ]; then
     exit 1
 fi
 
+# Step 1.5: Bundle universal-ctags into the app (for go-to-definition)
+echo "==> Bundling ctags..."
+"$SCRIPT_DIR/bundle-ctags.sh" "$APP_BUNDLE"
+
 # Step 2: Remove any previous DMG
 rm -f "$DMG_PATH"
 

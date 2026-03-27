@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -77,15 +79,25 @@ func parseCtagsJSON(data []byte) map[string][]Definition {
 }
 
 // findUniversalCtags locates the universal-ctags binary.
+// Checks the bundled location inside the .app first, then falls back to PATH.
 // Returns empty string if not found or if the system ctags is not universal-ctags.
 func findUniversalCtags() string {
-	// Try common universal-ctags binary names
+	// Check bundled ctags inside the .app bundle first.
+	// The binary lives at: .app/Contents/MacOS/cs (our binary)
+	// So the bundled ctags is at: .app/Contents/Resources/ctags/ctags
+	if exe, err := os.Executable(); err == nil {
+		bundled := filepath.Join(filepath.Dir(exe), "..", "Resources", "ctags", "ctags")
+		if _, err := os.Stat(bundled); err == nil {
+			return bundled
+		}
+	}
+
+	// Fall back to PATH lookup
 	for _, name := range []string{"uctags", "ctags"} {
 		path, err := exec.LookPath(name)
 		if err != nil {
 			continue
 		}
-		// Verify it's universal-ctags by checking --version
 		cmd := exec.Command(path, "--version")
 		out, err := cmd.Output()
 		if err != nil {

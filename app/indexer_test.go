@@ -107,7 +107,7 @@ func helper() string {
 	assert.Contains(t, symbols, "main")
 	assert.Contains(t, symbols, "helper")
 	assert.Equal(t, "main.go", symbols["helper"][0].File)
-	assert.Equal(t, "function", symbols["helper"][0].Kind)
+	assert.Equal(t, "func", symbols["helper"][0].Kind)
 }
 
 func TestRunCtags_NotInstalled(t *testing.T) {
