@@ -22,8 +22,30 @@ function shellEscape(path: string): string {
 
 export function TerminalPane({ sessionId, wsPort, focused, instanceId }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { disconnected, wsRef } = useTerminal(containerRef, { sessionId, wsPort });
+  const { disconnected, wsRef, fitRef, termRef } = useTerminal(containerRef, { sessionId, wsPort });
   const [dragOver, setDragOver] = useState(false);
+
+  // Refit terminal when tab becomes visible again
+  useEffect(() => {
+    if (focused && fitRef.current) {
+      requestAnimationFrame(() => {
+        fitRef.current?.fit();
+      });
+    }
+  }, [focused, fitRef]);
+
+  // Focus terminal when it's the active pane and window regains focus
+  useEffect(() => {
+    if (!focused) return;
+    const term = termRef.current;
+    if (term) term.focus();
+
+    const onWindowFocus = () => {
+      if (termRef.current) termRef.current.focus();
+    };
+    window.addEventListener("focus", onWindowFocus);
+    return () => window.removeEventListener("focus", onWindowFocus);
+  }, [focused, termRef]);
 
   const status = useSessionStore((s) => instanceId ? s.statuses.get(instanceId) : undefined);
   const sshDisconnected = status?.sshConnected === false;

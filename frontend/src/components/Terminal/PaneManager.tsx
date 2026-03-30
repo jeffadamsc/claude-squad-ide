@@ -9,9 +9,7 @@ export function PaneManager({ wsPort }: PaneManagerProps) {
   const tabs = useSessionStore((s) => s.tabs);
   const activeTabId = useSessionStore((s) => s.activeTabId);
 
-  const activeTab = tabs.find((t) => t.id === activeTabId);
-
-  if (!activeTab) {
+  if (tabs.length === 0 || !activeTabId) {
     return (
       <div
         style={{
@@ -28,14 +26,25 @@ export function PaneManager({ wsPort }: PaneManagerProps) {
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-      <TerminalPane
-        key={activeTab.ptyId}
-        sessionId={activeTab.ptyId}
-        wsPort={wsPort}
-        focused={true}
-        instanceId={activeTab.sessionId}
-      />
+    <div style={{ flex: 1, display: "flex", overflow: "hidden", position: "relative" }}>
+      {tabs.map((tab) => (
+        <div
+          key={tab.id}
+          style={{
+            flex: 1,
+            display: tab.id === activeTabId ? "flex" : "none",
+            overflow: "hidden",
+          }}
+        >
+          <TerminalPane
+            key={tab.ptyId}
+            sessionId={tab.ptyId}
+            wsPort={wsPort}
+            focused={tab.id === activeTabId}
+            instanceId={tab.sessionId}
+          />
+        </div>
+      ))}
     </div>
   );
 }

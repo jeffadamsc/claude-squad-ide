@@ -146,10 +146,12 @@ export function useTerminal(
     wsRef.current = ws;
 
     const resizeObserver = new ResizeObserver(() => {
+      // Skip resize when container is hidden (display:none gives 0 dimensions)
+      if (!container.offsetWidth || !container.offsetHeight) return;
       fit.fit();
       const dims = fit.proposeDimensions();
       const currentWs = wsRef.current;
-      if (dims && currentWs && currentWs.readyState === WebSocket.OPEN) {
+      if (dims && dims.rows > 0 && dims.cols > 0 && currentWs && currentWs.readyState === WebSocket.OPEN) {
         currentWs.send(
           JSON.stringify({ type: "resize", rows: dims.rows, cols: dims.cols })
         );
