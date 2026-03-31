@@ -72,7 +72,7 @@ func (hm *HostManager) GetClient(hostID string) (*Client, error) {
 
 	mc := &managedClient{
 		client:   client,
-		pm:       NewSSHProcessManager(client),
+		pm:       NewSSHProcessManager(client, hostID),
 		refCount: 1,
 	}
 

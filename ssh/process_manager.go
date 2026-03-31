@@ -14,13 +14,15 @@ import (
 type SSHProcessManager struct {
 	mu       sync.RWMutex
 	client   *Client
+	hostID   string
 	sessions map[string]*SSHSession
 	counter  int
 }
 
-func NewSSHProcessManager(client *Client) *SSHProcessManager {
+func NewSSHProcessManager(client *Client, hostID string) *SSHProcessManager {
 	return &SSHProcessManager{
 		client:   client,
+		hostID:   hostID,
 		sessions: make(map[string]*SSHSession),
 	}
 }
@@ -91,7 +93,7 @@ func (m *SSHProcessManager) Spawn(program string, args []string, opts pty.SpawnO
 
 	m.mu.Lock()
 	m.counter++
-	id := fmt.Sprintf("ssh-session-%d", m.counter)
+	id := fmt.Sprintf("ssh-%s-%d", m.hostID, m.counter)
 	sshSess := newSSHSession(id, stdin, session)
 	m.sessions[id] = sshSess
 	m.mu.Unlock()
