@@ -43,14 +43,14 @@ export function TerminalPane({ sessionId, wsPort, focused, instanceId }: Termina
     return () => window.removeEventListener("keydown", handler);
   }, [focused, zoomTerminalFont]);
 
-  // Refit terminal and scroll to bottom when tab becomes visible again
+  // Refit terminal when tab becomes visible again — only scroll if locked to bottom
   useEffect(() => {
     if (focused && fitRef.current) {
+      const locked = useSessionStore.getState().getScrollLocked(sessionId);
+      console.log(`[scroll] TerminalPane focused effect: locked=${locked} sessionId=${sessionId}`);
       requestAnimationFrame(() => {
         fitRef.current?.fit();
-        // After refit, xterm may need an extra frame to finish layout.
-        // Double-RAF ensures scrollToBottom fires after rendering completes.
-        if (termRef.current) {
+        if (termRef.current && locked) {
           const term = termRef.current;
           term.scrollToBottom();
           requestAnimationFrame(() => {
@@ -59,7 +59,7 @@ export function TerminalPane({ sessionId, wsPort, focused, instanceId }: Termina
         }
       });
     }
-  }, [focused, fitRef, termRef]);
+  }, [focused, fitRef, termRef, sessionId]);
 
   // Focus terminal when it's the active pane and window regains focus
   useEffect(() => {
@@ -69,16 +69,7 @@ export function TerminalPane({ sessionId, wsPort, focused, instanceId }: Termina
 
     const onWindowFocus = () => {
       if (termRef.current) {
-        const term = termRef.current;
-        term.focus();
-        // Scroll to bottom when window regains focus. Use double-RAF to
-        // handle the browser recalculating viewport sizes after focus.
-        requestAnimationFrame(() => {
-          term.scrollToBottom();
-          requestAnimationFrame(() => {
-            term.scrollToBottom();
-          });
-        });
+        termRef.current.focus();
       }
     };
     window.addEventListener("focus", onWindowFocus);

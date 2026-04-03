@@ -63,6 +63,8 @@ interface SessionState {
   diffLoading: boolean;
   editorFontSize: number;
   terminalFontSize: number;
+  // Per-session scroll state: true = auto-scroll on new output, false = user scrolled up
+  scrollLockedToBottom: Map<string, boolean>;
 
   setSessions: (sessions: SessionInfo[]) => void;
   updateStatuses: (statuses: SessionStatus[]) => void;
@@ -98,6 +100,8 @@ interface SessionState {
   zoomEditorFont: (delta: number) => void;
   setTerminalFontSize: (size: number) => void;
   zoomTerminalFont: (delta: number) => void;
+  setScrollLocked: (ptyId: string, locked: boolean) => void;
+  getScrollLocked: (ptyId: string) => boolean;
 }
 
 const extToLanguage: Record<string, string> = {
@@ -143,6 +147,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   diffLoading: false,
   editorFontSize: loadPersistedFontSize(FONT_SIZE_KEY),
   terminalFontSize: loadPersistedFontSize(TERMINAL_FONT_SIZE_KEY),
+  scrollLockedToBottom: new Map(),
 
   setSessions: (sessions) => set({ sessions }),
 
@@ -207,9 +212,13 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     }
     const tabId = `tab-${++tabCounter}`;
     const tab: Tab = { id: tabId, sessionId, ptyId, splits: [] };
+    // New/reopened sessions start locked to bottom
+    const nextScroll = new Map(get().scrollLockedToBottom);
+    nextScroll.set(ptyId, true);
     set((state) => ({
       tabs: [...state.tabs, tab],
       activeTabId: tabId,
+      scrollLockedToBottom: nextScroll,
     }));
   },
 
@@ -376,5 +385,15 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const next = Math.max(8, Math.min(40, current + delta));
     localStorage.setItem(TERMINAL_FONT_SIZE_KEY, String(next));
     set({ terminalFontSize: next });
+  },
+
+  setScrollLocked: (ptyId, locked) => {
+    const next = new Map(get().scrollLockedToBottom);
+    next.set(ptyId, locked);
+    set({ scrollLockedToBottom: next });
+  },
+
+  getScrollLocked: (ptyId) => {
+    return get().scrollLockedToBottom.get(ptyId) ?? true;
   },
 }));

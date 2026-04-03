@@ -24,25 +24,19 @@ export function useTerminal(
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelay = useRef(INITIAL_RECONNECT_DELAY);
   const intentionalClose = useRef(false);
-  const userScrolledUp = useRef(false);
-  const programmaticScroll = useRef(false);
   const [disconnected, setDisconnected] = useState(false);
   const terminalFontSize = useSessionStore((s) => s.terminalFontSize);
 
-  // Scroll terminal to bottom robustly. xterm sometimes needs more than one
-  // animation frame to finish rendering (e.g. after fit or large writes), so
-  // we issue scrollToBottom across two consecutive frames. We flag these as
-  // programmatic so the onScroll handler doesn't confuse them with user input.
-  const scrollToBottom = useCallback((term: Terminal) => {
-    requestAnimationFrame(() => {
-      programmaticScroll.current = true;
-      term.scrollToBottom();
-      requestAnimationFrame(() => {
-        programmaticScroll.current = true;
-        term.scrollToBottom();
-      });
-    });
-  }, []);
+  const { sessionId } = options;
+
+  // Read/write scroll lock from the store so it persists across tab switches
+  const isLocked = useCallback(() => {
+    return useSessionStore.getState().getScrollLocked(sessionId);
+  }, [sessionId]);
+
+  const setLocked = useCallback((locked: boolean) => {
+    useSessionStore.getState().setScrollLocked(sessionId, locked);
+  }, [sessionId]);
 
   // Check if the terminal viewport is currently scrolled to the bottom
   const isAtBottom = useCallback((term: Terminal) => {
@@ -57,7 +51,6 @@ export function useTerminal(
     let term = termRef.current;
     const fit = fitRef.current;
 
-    // Create terminal if it doesn't exist yet
     if (!term) return;
 
     const ws = new WebSocket(
@@ -66,7 +59,6 @@ export function useTerminal(
     ws.binaryType = "arraybuffer";
 
     ws.onopen = () => {
-      // Detach old addon if any
       if (attachRef.current) {
         attachRef.current.dispose();
         attachRef.current = null;
@@ -88,11 +80,9 @@ export function useTerminal(
         }
       }
 
-      // After reconnection, the server replays the snapshot which can leave
-      // the viewport scrolled to an arbitrary position. Reset scrolled-up
-      // state and force scroll during replay.
+      // Reconnection replays the snapshot — lock to bottom during replay
       if (term) {
-        userScrolledUp.current = false;
+        setLocked(true);
         const renderDispose = term.onRender(() => {
           term!.scrollToBottom();
         });
@@ -106,12 +96,10 @@ export function useTerminal(
       scheduleReconnect();
     };
 
-    ws.onerror = () => {
-      // onclose will fire after this, which handles reconnect
-    };
+    ws.onerror = () => {};
 
     wsRef.current = ws;
-  }, [options.sessionId, options.wsPort, containerRef, scrollToBottom]);
+  }, [options.sessionId, options.wsPort, containerRef, setLocked]);
 
   const scheduleReconnect = useCallback(() => {
     if (reconnectTimer.current) return;
@@ -170,10 +158,8 @@ export function useTerminal(
         );
       }
 
-      // After initial connection, the server replays the snapshot which can
-      // leave the viewport scrolled to an arbitrary position. Reset
-      // scrolled-up state and keep scrolling to bottom until data settles.
-      userScrolledUp.current = false;
+      // Initial connection — lock to bottom during snapshot replay
+      setLocked(true);
       const renderDispose = term.onRender(() => {
         term.scrollToBottom();
       });
@@ -190,32 +176,52 @@ export function useTerminal(
 
     wsRef.current = ws;
 
-    // Track whether the user has intentionally scrolled up. When they're
-    // at the bottom we auto-scroll on new output; when they scroll up we
-    // leave them alone until they return to the bottom. We skip
-    // programmatic scrolls to avoid resetting the flag incorrectly.
-    const scrollDispose = term.onScroll(() => {
-      if (programmaticScroll.current) {
-        programmaticScroll.current = false;
-        return;
+    // Detect user scrolling via wheel events on the container.
+    // We listen on the container (not .xterm-viewport) because wheel events
+    // target xterm's canvas/screen children and may not reach the viewport.
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        // User scrolled up — unlock
+        console.log(`[scroll] wheel UP deltaY=${e.deltaY} locked was=${isLocked()}`);
+        setLocked(false);
+      } else if (e.deltaY > 0) {
+        // User scrolled down — re-lock if they reached the bottom
+        requestAnimationFrame(() => {
+          const atBot = isAtBottom(term);
+          console.log(`[scroll] wheel DOWN RAF atBottom=${atBot} viewportY=${term.buffer.active.viewportY} baseY=${term.buffer.active.baseY}`);
+          if (atBot) {
+            setLocked(true);
+          }
+        });
       }
-      userScrolledUp.current = !isAtBottom(term);
-    });
+    };
+    container.addEventListener("wheel", onWheel, { passive: true });
 
-    // Whenever xterm finishes parsing a write, scroll to bottom if the user
-    // hasn't scrolled up. This keeps the viewport pinned during normal
-    // output without fighting a user who is reading history.
+    // Auto-scroll on new output only when locked to bottom.
+    // Deferred to RAF so wheel events can set locked=false first.
+    let rafPending = false;
+    let writeCount = 0;
     const writeDispose = term.onWriteParsed(() => {
-      if (!userScrolledUp.current) {
-        programmaticScroll.current = true;
-        term.scrollToBottom();
+      writeCount++;
+      if (writeCount % 20 === 1) {
+        console.log(`[scroll] onWriteParsed #${writeCount} locked=${isLocked()} viewportY=${term.buffer.active.viewportY} baseY=${term.buffer.active.baseY}`);
+      }
+      if (!rafPending) {
+        rafPending = true;
+        requestAnimationFrame(() => {
+          rafPending = false;
+          const locked = isLocked();
+          if (locked) {
+            console.log(`[scroll] onWriteParsed RAF → scrollToBottom`);
+            term.scrollToBottom();
+          }
+        });
       }
     });
 
     const resizeObserver = new ResizeObserver(() => {
-      // Skip resize when container is hidden (display:none gives 0 dimensions)
       if (!container.offsetWidth || !container.offsetHeight) return;
-      const wasAtBottom = isAtBottom(term) || !userScrolledUp.current;
+      const wasLocked = isLocked();
       fit.fit();
       const dims = fit.proposeDimensions();
       const currentWs = wsRef.current;
@@ -224,19 +230,21 @@ export function useTerminal(
           JSON.stringify({ type: "resize", rows: dims.rows, cols: dims.cols })
         );
       }
-      // Refit after resize can leave viewport at a stale scroll position.
-      // Restore scroll-to-bottom if we were already there.
-      if (wasAtBottom) {
-        userScrolledUp.current = false;
-        scrollToBottom(term);
+      if (wasLocked) {
+        requestAnimationFrame(() => {
+          term.scrollToBottom();
+          requestAnimationFrame(() => {
+            term.scrollToBottom();
+          });
+        });
       }
     });
     resizeObserver.observe(container);
 
     return () => {
       intentionalClose.current = true;
-      scrollDispose.dispose();
       writeDispose.dispose();
+      container.removeEventListener("wheel", onWheel);
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current);
         reconnectTimer.current = null;
@@ -254,14 +262,14 @@ export function useTerminal(
       termRef.current = null;
       fitRef.current = null;
     };
-  }, [options.sessionId, options.wsPort, containerRef, connect, scheduleReconnect]);
+  }, [options.sessionId, options.wsPort, containerRef, connect, scheduleReconnect, isLocked, setLocked, isAtBottom]);
 
-  // Sync font size changes to the live terminal instance
+  // Sync font size changes
   useEffect(() => {
     const term = termRef.current;
     const fit = fitRef.current;
     if (!term) return;
-    const wasAtBottom = isAtBottom(term) || !userScrolledUp.current;
+    const wasLocked = isLocked();
     term.options.fontSize = terminalFontSize;
     if (fit) {
       fit.fit();
@@ -271,11 +279,15 @@ export function useTerminal(
         ws.send(JSON.stringify({ type: "resize", rows: dims.rows, cols: dims.cols }));
       }
     }
-    if (wasAtBottom) {
-      userScrolledUp.current = false;
-      scrollToBottom(term);
+    if (wasLocked) {
+      requestAnimationFrame(() => {
+        term.scrollToBottom();
+        requestAnimationFrame(() => {
+          term.scrollToBottom();
+        });
+      });
     }
-  }, [terminalFontSize, isAtBottom, scrollToBottom]);
+  }, [terminalFontSize, isLocked]);
 
   return { termRef, wsRef, fitRef, disconnected };
 }
