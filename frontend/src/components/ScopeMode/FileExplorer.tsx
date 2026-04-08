@@ -40,9 +40,13 @@ export function FileExplorer({ sessionId }: FileExplorerProps) {
   const [inlineInput, setInlineInput] = useState<InlineInputState | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<{ path: string; name: string } | null>(null);
 
+  // Use a ref to track in-flight loads so the callback identity stays stable
+  const loadingDirsRef = useRef(loadingDirs);
+  loadingDirsRef.current = loadingDirs;
+
   const loadDir = useCallback(
     async (dirPath: string) => {
-      if (loadingDirs.has(dirPath)) return;
+      if (loadingDirsRef.current.has(dirPath)) return;
       setLoadingDirs((prev) => {
         const next = new Set(prev);
         next.add(dirPath);
@@ -61,7 +65,7 @@ export function FileExplorer({ sessionId }: FileExplorerProps) {
         });
       }
     },
-    [sessionId, setExplorerEntries, loadingDirs]
+    [sessionId, setExplorerEntries]
   );
 
   // Reload a directory and all its expanded ancestors
@@ -77,15 +81,19 @@ export function FileExplorer({ sessionId }: FileExplorerProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  // Auto-refresh expanded directories periodically to pick up external changes
+  // Auto-refresh expanded directories periodically to pick up external changes.
+  // Use a ref so the interval doesn't get recreated when expandedDirs changes.
+  const expandedDirsRef = useRef(expandedDirs);
+  expandedDirsRef.current = expandedDirs;
+
   useEffect(() => {
     const interval = setInterval(() => {
-      for (const dir of expandedDirs) {
+      for (const dir of expandedDirsRef.current) {
         loadDir(dir);
       }
     }, 5000);
     return () => clearInterval(interval);
-  }, [expandedDirs, loadDir]);
+  }, [loadDir]);
 
   const handleToggleDir = (dirPath: string) => {
     const next = new Set(expandedDirs);

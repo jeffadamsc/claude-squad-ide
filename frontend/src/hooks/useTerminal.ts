@@ -24,6 +24,8 @@ export function useTerminal(
   const reconnectTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reconnectDelay = useRef(INITIAL_RECONNECT_DELAY);
   const intentionalClose = useRef(false);
+  const renderDisposeRef = useRef<{ dispose: () => void } | null>(null);
+  const renderDisposeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [disconnected, setDisconnected] = useState(false);
   const terminalFontSize = useSessionStore((s) => s.terminalFontSize);
 
@@ -38,10 +40,12 @@ export function useTerminal(
     useSessionStore.getState().setScrollLocked(sessionId, locked);
   }, [sessionId]);
 
-  // Check if the terminal viewport is currently scrolled to the bottom
-  const isAtBottom = useCallback((term: Terminal) => {
+  // Check if the terminal viewport is currently scrolled to the bottom.
+  // tolerance allows "close to bottom" to count (useful when data is streaming
+  // and baseY grows between the wheel event and the RAF check).
+  const isAtBottom = useCallback((term: Terminal, tolerance = 0) => {
     const buf = term.buffer.active;
-    return buf.viewportY >= buf.baseY;
+    return buf.viewportY >= buf.baseY - tolerance;
   }, []);
 
   const connect = useCallback(() => {
@@ -83,10 +87,18 @@ export function useTerminal(
       // Reconnection replays the snapshot — lock to bottom during replay
       if (term) {
         setLocked(true);
-        const renderDispose = term.onRender(() => {
+        // Clean up any previous render listener before creating a new one
+        if (renderDisposeRef.current) renderDisposeRef.current.dispose();
+        if (renderDisposeTimerRef.current) clearTimeout(renderDisposeTimerRef.current);
+        const rd = term.onRender(() => {
           term!.scrollToBottom();
         });
-        setTimeout(() => renderDispose.dispose(), 500);
+        renderDisposeRef.current = rd;
+        renderDisposeTimerRef.current = setTimeout(() => {
+          rd.dispose();
+          renderDisposeRef.current = null;
+          renderDisposeTimerRef.current = null;
+        }, 500);
       }
     };
 
@@ -160,10 +172,17 @@ export function useTerminal(
 
       // Initial connection — lock to bottom during snapshot replay
       setLocked(true);
-      const renderDispose = term.onRender(() => {
+      if (renderDisposeRef.current) renderDisposeRef.current.dispose();
+      if (renderDisposeTimerRef.current) clearTimeout(renderDisposeTimerRef.current);
+      const rd = term.onRender(() => {
         term.scrollToBottom();
       });
-      setTimeout(() => renderDispose.dispose(), 500);
+      renderDisposeRef.current = rd;
+      renderDisposeTimerRef.current = setTimeout(() => {
+        rd.dispose();
+        renderDisposeRef.current = null;
+        renderDisposeTimerRef.current = null;
+      }, 500);
     };
 
     ws.onclose = () => {
@@ -185,12 +204,15 @@ export function useTerminal(
         console.log(`[scroll] wheel UP deltaY=${e.deltaY} locked was=${isLocked()}`);
         setLocked(false);
       } else if (e.deltaY > 0) {
-        // User scrolled down — re-lock if they reached the bottom
+        // User scrolled down — re-lock if they're at or near the bottom.
+        // Use a tolerance of 3 lines because new data can arrive between the
+        // wheel event and the RAF check, pushing baseY ahead of viewportY.
         requestAnimationFrame(() => {
-          const atBot = isAtBottom(term);
+          const atBot = isAtBottom(term, 3);
           console.log(`[scroll] wheel DOWN RAF atBottom=${atBot} viewportY=${term.buffer.active.viewportY} baseY=${term.buffer.active.baseY}`);
           if (atBot) {
             setLocked(true);
+            term.scrollToBottom();
           }
         });
       }
@@ -248,6 +270,15 @@ export function useTerminal(
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current);
         reconnectTimer.current = null;
+      }
+      // Clean up render-dispose listener and its timer
+      if (renderDisposeRef.current) {
+        renderDisposeRef.current.dispose();
+        renderDisposeRef.current = null;
+      }
+      if (renderDisposeTimerRef.current) {
+        clearTimeout(renderDisposeTimerRef.current);
+        renderDisposeTimerRef.current = null;
       }
       resizeObserver.disconnect();
       if (wsRef.current) {

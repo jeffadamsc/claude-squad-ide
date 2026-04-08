@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"claude-squad/config"
 	"claude-squad/log"
@@ -292,6 +293,17 @@ func (api *SessionAPI) OpenSession(id string) (string, error) {
 				return client.RunCommand("bash -lc " + sshPkg.ShellEscape(cmd))
 			},
 		})
+
+		// Detect dead SSH sessions after reconnect: if the process has
+		// already exited (e.g. the SSH connection dropped and was
+		// re-established), force the instance into Paused so the resume
+		// path below will respawn it.
+		if pid := inst.GetProcessID(); pid != "" && !inst.Paused() {
+			if pm.WaitExit(pid, time.Millisecond) {
+				log.InfoLog.Printf("OpenSession: SSH process %q for %q is dead after reconnect, forcing pause", pid, id)
+				inst.ForcePause()
+			}
+		}
 	}
 
 	// Resume paused sessions
@@ -393,6 +405,12 @@ func (api *SessionAPI) KillSession(id string) error {
 	inst, ok := api.instances[id]
 	if !ok {
 		return fmt.Errorf("session %s not found", id)
+	}
+
+	// Stop the indexer goroutine before removing the session.
+	if idx, ok := api.indexers[id]; ok {
+		idx.Stop()
+		delete(api.indexers, id)
 	}
 
 	if err := inst.Kill(); err != nil {

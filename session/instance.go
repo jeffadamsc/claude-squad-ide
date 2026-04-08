@@ -603,6 +603,14 @@ func (i *Instance) TmuxAlive() bool {
 	return i.processID != ""
 }
 
+// ForcePause transitions the instance to Paused without killing the process
+// or touching git state. Used when the underlying process has already died
+// (e.g. SSH connection dropped) so the next OpenSession can resume it.
+func (i *Instance) ForcePause() {
+	i.processID = ""
+	i.SetStatus(Paused)
+}
+
 // Pause stops the process and removes the worktree, preserving the branch
 func (i *Instance) Pause() error {
 	if !i.started {
@@ -881,10 +889,16 @@ func (i *Instance) SyncClaudeSessionID() bool {
 		sessionFile := filepath.Join(homeDir, ".claude", "sessions", fmt.Sprintf("%d.json", pid))
 		if data, err := os.ReadFile(sessionFile); err == nil {
 			var sf claudeSessionFile
-			if err := json.Unmarshal(data, &sf); err == nil && sf.SessionID != "" && sf.SessionID != i.ClaudeSessionID {
-				log.InfoLog.Printf("detected claude session change (pid file) for %q: %s -> %s", i.Title, i.ClaudeSessionID, sf.SessionID)
-				i.ClaudeSessionID = sf.SessionID
-				return true
+			if err := json.Unmarshal(data, &sf); err == nil && sf.SessionID != "" {
+				if sf.SessionID != i.ClaudeSessionID {
+					log.InfoLog.Printf("detected claude session change (pid file) for %q: %s -> %s", i.Title, i.ClaudeSessionID, sf.SessionID)
+					i.ClaudeSessionID = sf.SessionID
+					return true
+				}
+				// PID file has a valid session that matches — trust it and
+				// don't fall through to the project-dir scan, which may
+				// point to a different (stale) session and cause flip-flop.
+				return false
 			}
 		}
 	}

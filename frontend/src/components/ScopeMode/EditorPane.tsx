@@ -192,7 +192,7 @@ export function EditorPane({ sessionId }: EditorPaneProps) {
     setShowMarkdownPreview(false);
   }, [activeEditorFile]);
 
-  // Flush pending save and clean up definition provider on unmount
+  // Clean up definition provider, editor opener, and link when sessionId changes or on unmount
   useEffect(() => {
     return () => {
       clearTimeout(saveTimerRef.current);
@@ -201,6 +201,7 @@ export function EditorPane({ sessionId }: EditorPaneProps) {
         api()
           .WriteFile(sessionId, path, contents)
           .catch(console.error);
+        pendingSaveRef.current = null;
       }
       if (definitionProviderRef.current) {
         definitionProviderRef.current.dispose();

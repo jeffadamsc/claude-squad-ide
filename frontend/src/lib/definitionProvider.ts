@@ -78,6 +78,7 @@ export function registerDefinitionProvider(
     dispose: () => {
       clearInterval(refreshInterval);
       disposables.forEach((d) => d.dispose());
+      _symbolCache = null;
     },
   };
 }

@@ -256,8 +256,27 @@ func logError(format string, args ...interface{}) {
 	}
 }
 
+// filesChanged returns true if the new file list differs from the cached one.
+func (idx *SessionIndexer) filesChanged(newFiles []string) bool {
+	idx.mu.RLock()
+	oldFiles := idx.files
+	idx.mu.RUnlock()
+
+	if len(oldFiles) != len(newFiles) {
+		return true
+	}
+	for i := range oldFiles {
+		if oldFiles[i] != newFiles[i] {
+			return true
+		}
+	}
+	return false
+}
+
 // build gets the file list first (fast), updates state, then runs ctags on those files.
-func (idx *SessionIndexer) build(ctx context.Context) {
+// On periodic refreshes (force=false), it skips the expensive ctags step if the file list
+// hasn't changed, avoiding unnecessary CPU/memory churn.
+func (idx *SessionIndexer) build(ctx context.Context, force bool) {
 	// Step 1: get file list (fast — just git ls-files)
 	files, filesErr := listFilesInWorktreeCtx(ctx, idx.worktree)
 	if filesErr != nil {
@@ -265,6 +284,15 @@ func (idx *SessionIndexer) build(ctx context.Context) {
 			return // cancelled
 		}
 		logError("indexer build(%s): listFiles error: %v", idx.worktree, filesErr)
+	}
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	// Skip expensive ctags rebuild if file list hasn't changed and this isn't a forced refresh
+	if !force && !idx.filesChanged(files) {
+		return
 	}
 
 	// Update files immediately so search works even before ctags finishes
@@ -307,7 +335,7 @@ func (idx *SessionIndexer) loop(ctx context.Context) {
 	case <-ctx.Done():
 		return
 	case <-idx.refresh:
-		idx.build(ctx)
+		idx.build(ctx, true) // force: first build always runs fully
 	}
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
@@ -316,9 +344,9 @@ func (idx *SessionIndexer) loop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			idx.build(ctx)
+			idx.build(ctx, false) // periodic: skip ctags if files unchanged
 		case <-idx.refresh:
-			idx.build(ctx)
+			idx.build(ctx, true) // explicit refresh: always rebuild
 		}
 	}
 }

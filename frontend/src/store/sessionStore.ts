@@ -126,6 +126,9 @@ export function detectLanguage(filePath: string): string {
 
 let tabCounter = 0;
 
+// Track pending flash-clear timers to avoid duplicate/unbounded setTimeout accumulation
+const _flashTimers = new Map<string, ReturnType<typeof setTimeout>>();
+
 export const useSessionStore = create<SessionState>((set, get) => ({
   sessions: [],
   statuses: new Map(),
@@ -165,10 +168,14 @@ export const useSessionStore = create<SessionState>((set, get) => ({
         if (status && status.status !== "loading") {
           newLoading.delete(id);
           newFlash.add(id);
-          // Auto-clear flash after 1.5s
-          setTimeout(() => {
-            get().clearFlash(id);
-          }, 1500);
+          // Schedule flash clear, but only one timer per id
+          if (!_flashTimers.has(id)) {
+            const timer = setTimeout(() => {
+              _flashTimers.delete(id);
+              get().clearFlash(id);
+            }, 1500);
+            _flashTimers.set(id, timer);
+          }
         }
       }
       if (newLoading.size !== loadingSessionIds.size) {
@@ -224,6 +231,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
 
   closeTab: (tabId) =>
     set((state) => {
+      const closedTab = state.tabs.find((t) => t.id === tabId);
       const tabs = state.tabs.filter((t) => t.id !== tabId);
       const activeTabId =
         state.activeTabId === tabId
@@ -231,6 +239,12 @@ export const useSessionStore = create<SessionState>((set, get) => ({
             ? tabs[tabs.length - 1].id
             : null
           : state.activeTabId;
+      // Clean up scroll state for the closed tab's ptyId
+      if (closedTab) {
+        const nextScroll = new Map(state.scrollLockedToBottom);
+        nextScroll.delete(closedTab.ptyId);
+        return { tabs, activeTabId, scrollLockedToBottom: nextScroll };
+      }
       return { tabs, activeTabId };
     }),
 
