@@ -36,10 +36,12 @@ func RunTask(ctx context.Context, task tasks.Task, cfg RunConfig) *RunResult {
 
 	// Build command arguments
 	// Note: --verbose is required when using --output-format=stream-json with --print
+	// Note: --dangerously-skip-permissions allows MCP tools to run in --print mode
 	args := []string{
 		"--print",
 		"--output-format", "stream-json",
 		"--verbose",
+		"--dangerously-skip-permissions",
 		"-p", task.Prompt(),
 	}
 

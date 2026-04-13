@@ -2,6 +2,7 @@ package harness
 
 import (
 	"fmt"
+	"time"
 
 	"claude-squad/app"
 )
@@ -50,4 +51,23 @@ func (m *MCPServer) Config() string {
 // Port returns the server port.
 func (m *MCPServer) Port() int {
 	return m.port
+}
+
+// WaitForIndex waits until the indexer has symbols available.
+// Returns the number of symbol names indexed, or 0 if timeout.
+func (m *MCPServer) WaitForIndex(timeout time.Duration) int {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		symbols := m.indexer.AllSymbols()
+		if len(symbols) > 0 {
+			return len(symbols)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	return 0
+}
+
+// SymbolCount returns the current number of indexed symbol names.
+func (m *MCPServer) SymbolCount() int {
+	return len(m.indexer.AllSymbols())
 }

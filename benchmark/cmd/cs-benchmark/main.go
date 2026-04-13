@@ -116,10 +116,14 @@ func run() error {
 		}
 		defer mcpServer.Stop()
 
-		// Wait for indexer to build
-		time.Sleep(2 * time.Second)
+		// Wait for indexer to build (up to 30 seconds)
+		if !jsonOutput {
+			fmt.Print("Building symbol index...")
+		}
+		symbolCount := mcpServer.WaitForIndex(30 * time.Second)
 		mcpConfig = mcpServer.Config()
 		if !jsonOutput {
+			fmt.Printf(" %d symbols indexed\n", symbolCount)
 			fmt.Printf("MCP server running on port %d\n", mcpServer.Port())
 		}
 	}

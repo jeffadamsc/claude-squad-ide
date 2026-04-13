@@ -94,14 +94,14 @@ func ParseMetrics(output string) (*TaskMetrics, error) {
 						metrics.ToolCalls = append(metrics.ToolCalls, tc)
 
 						// Count by tool type
-						switch content.Name {
-						case "Read":
+						switch {
+						case content.Name == "Read":
 							metrics.ReadCount++
-						case "Grep":
+						case content.Name == "Grep":
 							metrics.GrepCount++
-						case "Edit", "Write":
+						case content.Name == "Edit" || content.Name == "Write":
 							metrics.EditCount++
-						case "lookup_symbol", "list_files", "get_file_outline", "read_lines", "search_symbols":
+						case strings.HasPrefix(content.Name, "mcp__cs-index__"):
 							metrics.MCPToolCount++
 						}
 					}
