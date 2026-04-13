@@ -215,6 +215,56 @@ func (api *SessionAPI) setMCPConfigWithOpts(inst *session.Instance, opts CreateO
 		return
 	}
 	inst.MCPConfig = api.mcpServer.GenerateMCPConfig(inst.Title)
+
+	// Write MCP usage guidance to worktree's .claude/CLAUDE.md
+	// Based on pitlane-mcp recommendations for encouraging MCP tool usage
+	worktree := inst.GetWorktreePath()
+	if worktree != "" {
+		writeMCPGuidance(worktree)
+	}
+}
+
+// mcpGuidance is the context hint for Claude to prefer MCP index tools.
+// Based on pitlane-mcp's CLAUDE.md recommendations.
+const mcpGuidance = `# MCP Index Server
+
+You have access to a cs-index MCP server with symbol lookup tools:
+- ` + "`mcp__cs-index__lookup_symbol`" + ` - Find where a symbol is defined
+- ` + "`mcp__cs-index__search_symbols`" + ` - Search for symbols by name pattern
+- ` + "`mcp__cs-index__get_file_outline`" + ` - Get symbols defined in a file
+- ` + "`mcp__cs-index__list_files`" + ` - List tracked files
+- ` + "`mcp__cs-index__read_lines`" + ` - Read specific line ranges
+
+## Usage Guidelines
+
+**Prefer index tools for symbol lookups:**
+- Use ` + "`lookup_symbol`" + ` to find definitions instead of grepping whole files
+- Use ` + "`search_symbols`" + ` when you know part of a symbol name
+- Use ` + "`get_file_outline`" + ` to understand file structure before reading
+
+**Fall back to Grep/Read when:**
+- The index tools don't have what you need
+- You need to search for text that isn't a symbol name
+- You need to read or edit file content
+`
+
+// writeMCPGuidance writes MCP usage hints to .claude/CLAUDE.md in the worktree.
+func writeMCPGuidance(worktree string) {
+	claudeDir := filepath.Join(worktree, ".claude")
+	if err := os.MkdirAll(claudeDir, 0755); err != nil {
+		log.ErrorLog.Printf("failed to create .claude dir: %v", err)
+		return
+	}
+
+	guidancePath := filepath.Join(claudeDir, "CLAUDE.md")
+	// Don't overwrite if it already exists (user may have customized it)
+	if _, err := os.Stat(guidancePath); err == nil {
+		return
+	}
+
+	if err := os.WriteFile(guidancePath, []byte(mcpGuidance), 0644); err != nil {
+		log.ErrorLog.Printf("failed to write MCP guidance: %v", err)
+	}
 }
 
 // setMCPConfig is the existing helper (for backward compatibility)
