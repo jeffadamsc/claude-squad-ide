@@ -66,6 +66,9 @@ type Instance struct {
 	ClaudeSessionID string
 	// HostID is the SSH host ID for remote sessions (empty = local).
 	HostID string
+	// MCPConfig is the MCP server configuration JSON to pass to Claude Code.
+	// If set, it will be passed via --mcp-config when spawning the process.
+	MCPConfig string
 
 	// gitExecutor is the command executor for git operations (local or remote SSH).
 	gitExecutor git.CommandExecutor
@@ -325,6 +328,10 @@ func (i *Instance) spawnProcess(dir string, resume bool) error {
 			id := generateUUID()
 			i.ClaudeSessionID = id
 			args = append(args, "--session-id", id)
+		}
+		// Inject MCP config if set (for claude-squad index server)
+		if i.MCPConfig != "" {
+			args = append(args, "--mcp-config", i.MCPConfig)
 		}
 	}
 
