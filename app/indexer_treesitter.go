@@ -2,6 +2,8 @@ package app
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 )
 
@@ -134,7 +136,84 @@ func (idx *TreeSitterIndexer) loop(ctx context.Context) {
 }
 
 func (idx *TreeSitterIndexer) build(ctx context.Context) {
-	// Stub - full implementation in Task 4
+	// Step 1: Get file list
+	files, err := listFilesInWorktreeCtx(ctx, idx.worktree)
+	if err != nil {
+		if ctx.Err() == nil {
+			logError("treesitter build(%s): listFiles: %v", idx.worktree, err)
+		}
+		return
+	}
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	// Step 2: Parse each file and extract symbols
+	symbols := make(map[string][]Symbol)
+	var allRefs []Reference
+
+	for _, file := range files {
+		if ctx.Err() != nil {
+			return
+		}
+
+		fullPath := filepath.Join(idx.worktree, file)
+		content, err := os.ReadFile(fullPath)
+		if err != nil {
+			continue // skip unreadable files
+		}
+
+		// Skip binary files (simple heuristic)
+		if isBinary(content) {
+			continue
+		}
+
+		syms, refs, err := extractSymbols(file, content)
+		if err != nil {
+			logError("treesitter parse %s: %v", file, err)
+			continue
+		}
+
+		for _, sym := range syms {
+			symbols[sym.Name] = append(symbols[sym.Name], sym)
+		}
+		allRefs = append(allRefs, refs...)
+	}
+
+	if ctx.Err() != nil {
+		return
+	}
+
+	// Count for logging
+	nSymbols := 0
+	for _, defs := range symbols {
+		nSymbols += len(defs)
+	}
+	logInfo("treesitter build(%s): %d files, %d symbols, %d refs",
+		idx.worktree, len(files), nSymbols, len(allRefs))
+
+	// Step 3: Update state
+	idx.mu.Lock()
+	idx.files = files
+	idx.symbols = symbols
+	// callgraph updated in later task
+	idx.mu.Unlock()
+}
+
+// isBinary returns true if content looks like binary data.
+func isBinary(content []byte) bool {
+	// Check first 512 bytes for null bytes
+	check := content
+	if len(check) > 512 {
+		check = check[:512]
+	}
+	for _, b := range check {
+		if b == 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // CallGraph placeholder for compilation
