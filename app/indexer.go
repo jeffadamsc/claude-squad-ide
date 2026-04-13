@@ -26,6 +26,42 @@ type Definition struct {
 	Scope    string `json:"scope"`
 }
 
+// Symbol is the tree-sitter-based symbol with extended fields.
+// Replaces Definition for the new indexer.
+type Symbol struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`       // function, type, variable, method, class
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	EndLine    int    `json:"end_line"`   // for extracting full body
+	Column     int    `json:"column"`
+	Language   string `json:"language"`
+	Scope      string `json:"scope"`      // parent class/module
+	Signature  string `json:"signature"`  // function signature
+	DocComment string `json:"doc,omitempty"`
+}
+
+// Reference represents a call or usage of a symbol.
+type Reference struct {
+	Symbol string `json:"symbol"`  // what's being called
+	File   string `json:"file"`    // where the call is
+	Line   int    `json:"line"`
+	Column int    `json:"column"`
+	Caller string `json:"caller"`  // function containing the call
+	Kind   string `json:"kind"`    // call, import, type_ref
+}
+
+// Indexer is the interface for symbol indexers (ctags or tree-sitter).
+type Indexer interface {
+	Start()
+	Stop()
+	Refresh()
+	Worktree() string
+	Files() []string
+	Lookup(name string) []Definition
+	AllSymbols() map[string][]Definition
+}
+
 // ctagsEntry is the raw JSON structure from ctags --output-format=json.
 type ctagsEntry struct {
 	Type     string `json:"_type"`
