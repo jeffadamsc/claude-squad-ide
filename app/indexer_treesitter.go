@@ -193,12 +193,38 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 	logInfo("treesitter build(%s): %d files, %d symbols, %d refs",
 		idx.worktree, len(files), nSymbols, len(allRefs))
 
+	// Build call graph
+	callgraph := NewCallGraph()
+	for _, ref := range allRefs {
+		callgraph.AddReference(ref)
+	}
+
 	// Step 3: Update state
 	idx.mu.Lock()
 	idx.files = files
 	idx.symbols = symbols
-	// callgraph updated in later task
+	idx.callgraph = callgraph
 	idx.mu.Unlock()
+}
+
+// FindCallers returns all places where symbol is called.
+func (idx *TreeSitterIndexer) FindCallers(symbol string) []Reference {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	if idx.callgraph == nil {
+		return nil
+	}
+	return idx.callgraph.FindCallers(symbol)
+}
+
+// FindCallees returns all symbols called by the given function.
+func (idx *TreeSitterIndexer) FindCallees(caller string) []Reference {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	if idx.callgraph == nil {
+		return nil
+	}
+	return idx.callgraph.FindCallees(caller)
 }
 
 // isBinary returns true if content looks like binary data.
@@ -216,5 +242,3 @@ func isBinary(content []byte) bool {
 	return false
 }
 
-// CallGraph placeholder for compilation
-type CallGraph struct{}
