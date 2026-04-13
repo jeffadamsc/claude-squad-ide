@@ -42,5 +42,5 @@ func GetAll() []Task {
 
 // Categories returns the list of valid category names.
 func Categories() []string {
-	return []string{"symbol", "understanding", "edit", "crossfile"}
+	return []string{"symbol", "symbol-indexed", "understanding", "edit", "crossfile"}
 }
