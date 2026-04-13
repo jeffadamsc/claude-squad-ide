@@ -20,7 +20,7 @@ import (
 
 func TestMCPIndexServer_StartStop(t *testing.T) {
 	api := &SessionAPI{
-		indexers:  make(map[string]*SessionIndexer),
+		indexers:  make(map[string]Indexer),
 		instances: make(map[string]*session.Instance),
 	}
 
@@ -42,7 +42,7 @@ func TestMCPIndexServer_StartStop(t *testing.T) {
 
 func TestMCPIndexServer_GenerateMCPConfig(t *testing.T) {
 	api := &SessionAPI{
-		indexers:  make(map[string]*SessionIndexer),
+		indexers:  make(map[string]Indexer),
 		instances: make(map[string]*session.Instance),
 	}
 
@@ -90,7 +90,7 @@ type jsonRPCResponse struct {
 
 func TestMCPIndexServer_ToolsList(t *testing.T) {
 	api := &SessionAPI{
-		indexers:  make(map[string]*SessionIndexer),
+		indexers:  make(map[string]Indexer),
 		instances: make(map[string]*session.Instance),
 	}
 
@@ -127,7 +127,7 @@ func TestMCPIndexServer_ToolsList(t *testing.T) {
 
 func TestMCPIndexServer_LookupSymbol_NoIndexer(t *testing.T) {
 	api := &SessionAPI{
-		indexers:  make(map[string]*SessionIndexer),
+		indexers:  make(map[string]Indexer),
 		instances: make(map[string]*session.Instance),
 	}
 

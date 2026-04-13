@@ -62,6 +62,27 @@ type Indexer interface {
 	AllSymbols() map[string][]Definition
 }
 
+// IndexerType determines which indexer to use.
+type IndexerType string
+
+const (
+	IndexerCtags      IndexerType = "ctags"
+	IndexerTreeSitter IndexerType = "treesitter"
+)
+
+// DefaultIndexer is the default indexer type for new sessions.
+var DefaultIndexer = IndexerTreeSitter
+
+// createIndexer creates an indexer of the given type for the worktree.
+func createIndexer(worktree string, indexerType IndexerType) Indexer {
+	switch indexerType {
+	case IndexerTreeSitter:
+		return NewTreeSitterIndexer(worktree)
+	default:
+		return NewSessionIndexer(worktree)
+	}
+}
+
 // ctagsEntry is the raw JSON structure from ctags --output-format=json.
 type ctagsEntry struct {
 	Type     string `json:"_type"`

@@ -114,7 +114,7 @@ func newTestAPI(t *testing.T) *SessionAPI {
 		hostManager:   hostMgr,
 		hostStore:     hostStore,
 		keychainStore: keychainStore,
-		indexers:      make(map[string]*SessionIndexer),
+		indexers:      make(map[string]Indexer),
 		mcpServer:     NewMCPIndexServer(nil),
 	}
 	t.Cleanup(func() { api.Close() })
