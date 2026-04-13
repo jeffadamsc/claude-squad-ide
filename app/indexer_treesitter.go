@@ -3,7 +3,9 @@ package app
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 )
 
@@ -18,6 +20,7 @@ type TreeSitterIndexer struct {
 	symbols   map[string][]Symbol
 	callgraph *CallGraph
 	search    *SymbolIndex
+	store     *IndexStore
 
 	cancel  context.CancelFunc
 	done    chan struct{}
@@ -30,9 +33,21 @@ func NewTreeSitterIndexer(worktree string) *TreeSitterIndexer {
 		worktree: worktree,
 		symbols:  make(map[string][]Symbol),
 		search:   NewSymbolIndex(),
+		store:    NewIndexStore(worktree),
 		done:     make(chan struct{}),
 		refresh:  make(chan struct{}, 1),
 	}
+}
+
+// getHeadCommit returns the current HEAD commit hash for the worktree.
+func getHeadCommit(worktree string) string {
+	cmd := exec.CommandContext(context.Background(), "git", "rev-parse", "HEAD")
+	cmd.Dir = worktree
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // Worktree returns the indexed directory path.
@@ -141,6 +156,33 @@ func (idx *TreeSitterIndexer) loop(ctx context.Context) {
 }
 
 func (idx *TreeSitterIndexer) build(ctx context.Context) {
+	// Try to load from disk first
+	if idx.symbols == nil || len(idx.symbols) == 0 {
+		if symbols, cg, commit, err := idx.store.Load(); err == nil && symbols != nil {
+			currentCommit := getHeadCommit(idx.worktree)
+			if commit == currentCommit {
+				idx.mu.Lock()
+				idx.symbols = symbols
+				idx.callgraph = cg
+				idx.mu.Unlock()
+
+				var allSyms []Symbol
+				for _, syms := range symbols {
+					allSyms = append(allSyms, syms...)
+				}
+				idx.search.IndexBatch(allSyms)
+
+				logInfo("treesitter: loaded %d symbols from cache", len(allSyms))
+
+				files, _ := listFilesInWorktreeCtx(ctx, idx.worktree)
+				idx.mu.Lock()
+				idx.files = files
+				idx.mu.Unlock()
+				return
+			}
+		}
+	}
+
 	// Step 1: Get file list
 	files, err := listFilesInWorktreeCtx(ctx, idx.worktree)
 	if err != nil {
@@ -218,6 +260,11 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 	idx.symbols = symbols
 	idx.callgraph = callgraph
 	idx.mu.Unlock()
+
+	commit := getHeadCommit(idx.worktree)
+	if err := idx.store.Save(symbols, callgraph, commit); err != nil {
+		logError("treesitter: failed to persist index: %v", err)
+	}
 }
 
 // SearchSymbols returns symbols matching query, ranked by BM25.
