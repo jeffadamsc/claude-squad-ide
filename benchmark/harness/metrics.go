@@ -57,11 +57,13 @@ type streamMessage struct {
 	} `json:"message,omitempty"`
 
 	// Result fields
-	IsError      bool   `json:"is_error,omitempty"`
-	ErrorMsg     string `json:"error,omitempty"`
-	InputTokens  int    `json:"input_tokens,omitempty"`
-	OutputTokens int    `json:"output_tokens,omitempty"`
-	DurationMs   int    `json:"duration_ms,omitempty"`
+	IsError    bool   `json:"is_error,omitempty"`
+	ErrorMsg   string `json:"error,omitempty"`
+	DurationMs int    `json:"duration_ms,omitempty"`
+	Usage      *struct {
+		InputTokens  int `json:"input_tokens"`
+		OutputTokens int `json:"output_tokens"`
+	} `json:"usage,omitempty"`
 }
 
 // ParseMetrics parses Claude's stream-json output into TaskMetrics.
@@ -107,9 +109,11 @@ func ParseMetrics(output string) (*TaskMetrics, error) {
 			}
 
 		case "result":
-			metrics.InputTokens = msg.InputTokens
-			metrics.OutputTokens = msg.OutputTokens
-			metrics.TotalTokens = msg.InputTokens + msg.OutputTokens
+			if msg.Usage != nil {
+				metrics.InputTokens = msg.Usage.InputTokens
+				metrics.OutputTokens = msg.Usage.OutputTokens
+				metrics.TotalTokens = msg.Usage.InputTokens + msg.Usage.OutputTokens
+			}
 			metrics.WallTime = time.Duration(msg.DurationMs) * time.Millisecond
 
 			if msg.IsError {

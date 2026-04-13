@@ -35,9 +35,11 @@ func RunTask(ctx context.Context, task tasks.Task, cfg RunConfig) *RunResult {
 	}
 
 	// Build command arguments
+	// Note: --verbose is required when using --output-format=stream-json with --print
 	args := []string{
 		"--print",
 		"--output-format", "stream-json",
+		"--verbose",
 		"-p", task.Prompt(),
 	}
 

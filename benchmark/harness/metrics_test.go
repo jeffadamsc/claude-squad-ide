@@ -8,11 +8,11 @@ import (
 )
 
 func TestParseMetrics(t *testing.T) {
-	// Sample stream-json output from Claude
+	// Sample stream-json output from Claude (using actual format with usage object)
 	output := `{"type":"system","subtype":"init","apiKeySource":"keychain"}
 {"type":"assistant","message":{"id":"msg_01","role":"assistant","content":[{"type":"tool_use","id":"tu_1","name":"Read","input":{"file_path":"/test.go"}}],"usage":{"input_tokens":100,"output_tokens":50}}}
 {"type":"assistant","message":{"id":"msg_02","role":"assistant","content":[{"type":"tool_use","id":"tu_2","name":"Grep","input":{"pattern":"func"}}],"usage":{"input_tokens":150,"output_tokens":75}}}
-{"type":"result","subtype":"success","cost_usd":0.01,"is_error":false,"duration_ms":5000,"duration_api_ms":4500,"input_tokens":250,"output_tokens":125}`
+{"type":"result","subtype":"success","cost_usd":0.01,"is_error":false,"duration_ms":5000,"duration_api_ms":4500,"usage":{"input_tokens":250,"output_tokens":125}}`
 
 	metrics, err := ParseMetrics(output)
 	require.NoError(t, err)
