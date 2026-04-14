@@ -69,3 +69,85 @@ func (cg *CallGraph) Stats() (callerCount, calleeCount int) {
 	defer cg.mu.RUnlock()
 	return len(cg.callers), len(cg.callees)
 }
+
+// SymbolCentrality holds centrality metrics for a symbol.
+type SymbolCentrality struct {
+	Symbol    string  `json:"symbol"`
+	InDegree  int     `json:"in_degree"`  // how many places call this symbol
+	OutDegree int     `json:"out_degree"` // how many symbols this calls
+	Score     float64 `json:"score"`      // combined centrality score
+}
+
+// ComputeCentrality calculates centrality scores for all symbols.
+// Uses a simple degree-based centrality: Score = InDegree + 0.5*OutDegree
+// This weights being called (usage) higher than calling others.
+func (cg *CallGraph) ComputeCentrality() []SymbolCentrality {
+	cg.mu.RLock()
+	defer cg.mu.RUnlock()
+
+	// Collect all symbols
+	symbols := make(map[string]*SymbolCentrality)
+
+	// Count in-degree (how many places call each symbol)
+	for symbol, refs := range cg.callers {
+		if _, ok := symbols[symbol]; !ok {
+			symbols[symbol] = &SymbolCentrality{Symbol: symbol}
+		}
+		symbols[symbol].InDegree = len(refs)
+	}
+
+	// Count out-degree (how many symbols each caller calls)
+	for caller, refs := range cg.callees {
+		if _, ok := symbols[caller]; !ok {
+			symbols[caller] = &SymbolCentrality{Symbol: caller}
+		}
+		// Count unique callees
+		seen := make(map[string]bool)
+		for _, ref := range refs {
+			seen[ref.Symbol] = true
+		}
+		symbols[caller].OutDegree = len(seen)
+	}
+
+	// Compute combined score and convert to slice
+	var result []SymbolCentrality
+	for _, sc := range symbols {
+		// Weight in-degree higher since being called indicates importance
+		sc.Score = float64(sc.InDegree) + 0.5*float64(sc.OutDegree)
+		result = append(result, *sc)
+	}
+
+	// Sort by score descending
+	for i := 0; i < len(result)-1; i++ {
+		for j := i + 1; j < len(result); j++ {
+			if result[j].Score > result[i].Score {
+				result[i], result[j] = result[j], result[i]
+			}
+		}
+	}
+
+	return result
+}
+
+// GetCentrality returns the centrality score for a specific symbol.
+func (cg *CallGraph) GetCentrality(symbol string) SymbolCentrality {
+	cg.mu.RLock()
+	defer cg.mu.RUnlock()
+
+	sc := SymbolCentrality{Symbol: symbol}
+
+	if refs, ok := cg.callers[symbol]; ok {
+		sc.InDegree = len(refs)
+	}
+
+	if refs, ok := cg.callees[symbol]; ok {
+		seen := make(map[string]bool)
+		for _, ref := range refs {
+			seen[ref.Symbol] = true
+		}
+		sc.OutDegree = len(seen)
+	}
+
+	sc.Score = float64(sc.InDegree) + 0.5*float64(sc.OutDegree)
+	return sc
+}

@@ -1,6 +1,8 @@
 package app
 
 import (
+	"strings"
+
 	"github.com/blevesearch/bleve/v2"
 	"github.com/blevesearch/bleve/v2/mapping"
 )
@@ -26,6 +28,8 @@ func buildIndexMapping() mapping.IndexMapping {
 
 	keywordFieldMapping := bleve.NewKeywordFieldMapping()
 
+	numericFieldMapping := bleve.NewNumericFieldMapping()
+
 	symbolMapping := bleve.NewDocumentMapping()
 	symbolMapping.AddFieldMappingsAt("name", textFieldMapping)
 	symbolMapping.AddFieldMappingsAt("kind", keywordFieldMapping)
@@ -33,6 +37,11 @@ func buildIndexMapping() mapping.IndexMapping {
 	symbolMapping.AddFieldMappingsAt("language", keywordFieldMapping)
 	symbolMapping.AddFieldMappingsAt("scope", textFieldMapping)
 	symbolMapping.AddFieldMappingsAt("signature", textFieldMapping)
+	symbolMapping.AddFieldMappingsAt("line", numericFieldMapping)
+	symbolMapping.AddFieldMappingsAt("end_line", numericFieldMapping)
+	symbolMapping.AddFieldMappingsAt("column", numericFieldMapping)
+	symbolMapping.AddFieldMappingsAt("start_byte", numericFieldMapping)
+	symbolMapping.AddFieldMappingsAt("end_byte", numericFieldMapping)
 
 	indexMapping := bleve.NewIndexMapping()
 	indexMapping.DefaultMapping = symbolMapping
@@ -73,7 +82,7 @@ func (si *SymbolIndex) Search(query string, limit int) []Symbol {
 	req := bleve.NewSearchRequest(q)
 	req.Size = limit
 	req.Fields = []string{"name", "kind", "file", "line", "end_line",
-		"column", "language", "scope", "signature"}
+		"column", "language", "scope", "signature", "start_byte", "end_byte"}
 
 	results, err := si.index.Search(req)
 	if err != nil {
@@ -82,7 +91,8 @@ func (si *SymbolIndex) Search(query string, limit int) []Symbol {
 
 	if results.Total == 0 {
 		// Fallback: wildcard match on the name field (case-insensitive via lowercase)
-		wq := bleve.NewWildcardQuery("*" + query + "*")
+		// The standard analyzer lowercases indexed terms, so we must lowercase the query too
+		wq := bleve.NewWildcardQuery("*" + strings.ToLower(query) + "*")
 		wq.SetField("name")
 		req2 := bleve.NewSearchRequest(wq)
 		req2.Size = limit
@@ -102,6 +112,8 @@ func (si *SymbolIndex) Search(query string, limit int) []Symbol {
 			Line:      getInt(hit.Fields, "line"),
 			EndLine:   getInt(hit.Fields, "end_line"),
 			Column:    getInt(hit.Fields, "column"),
+			StartByte: getUint32(hit.Fields, "start_byte"),
+			EndByte:   getUint32(hit.Fields, "end_byte"),
 			Language:  getString(hit.Fields, "language"),
 			Scope:     getString(hit.Fields, "scope"),
 			Signature: getString(hit.Fields, "signature"),
@@ -142,6 +154,20 @@ func getInt(fields map[string]interface{}, key string) int {
 		case float64:
 			return int(n)
 		case int:
+			return n
+		}
+	}
+	return 0
+}
+
+func getUint32(fields map[string]interface{}, key string) uint32 {
+	if v, ok := fields[key]; ok {
+		switch n := v.(type) {
+		case float64:
+			return uint32(n)
+		case int:
+			return uint32(n)
+		case uint32:
 			return n
 		}
 	}

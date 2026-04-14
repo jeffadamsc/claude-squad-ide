@@ -273,6 +273,71 @@ func (idx *TreeSitterIndexer) SearchSymbols(query string, limit int) []Symbol {
 	return idx.search.Search(query, limit)
 }
 
+// SearchResult holds a symbol with its content and token estimate.
+type SearchResult struct {
+	Symbol  Symbol `json:"symbol"`
+	Content string `json:"content,omitempty"`
+	Tokens  int    `json:"tokens"`
+}
+
+// SearchWithBudget returns symbols matching query, packed within a token budget.
+// Returns results in relevance order (BM25) until the budget is exhausted.
+// If includeContent is true, loads the symbol's source code.
+func (idx *TreeSitterIndexer) SearchWithBudget(query string, maxTokens int, includeContent bool) []SearchResult {
+	// Search with a generous limit first
+	symbols := idx.search.Search(query, 100)
+	if len(symbols) == 0 {
+		return nil
+	}
+
+	var results []SearchResult
+	usedTokens := 0
+
+	for _, sym := range symbols {
+		var content string
+		var symTokens int
+
+		if includeContent {
+			// Load content using byte offsets
+			c, err := idx.GetSymbolContent(sym)
+			if err != nil {
+				continue
+			}
+			content = c
+			symTokens = EstimateTokens(content)
+		} else {
+			// Estimate tokens from signature or name
+			if sym.Signature != "" {
+				symTokens = EstimateTokens(sym.Signature)
+			} else {
+				symTokens = EstimateTokens(sym.Name) + 5 // overhead for metadata
+			}
+		}
+
+		// Check if adding this symbol would exceed budget
+		if usedTokens+symTokens > maxTokens {
+			// If we haven't added anything yet, add at least one result
+			if len(results) == 0 {
+				results = append(results, SearchResult{
+					Symbol:  sym,
+					Content: content,
+					Tokens:  symTokens,
+				})
+			}
+			break
+		}
+
+		results = append(results, SearchResult{
+			Symbol:  sym,
+			Content: content,
+			Tokens:  symTokens,
+		})
+		usedTokens += symTokens
+	}
+
+	return results
+}
+
 // FindCallers returns all places where symbol is called.
 func (idx *TreeSitterIndexer) FindCallers(symbol string) []Reference {
 	idx.mu.RLock()
@@ -291,6 +356,30 @@ func (idx *TreeSitterIndexer) FindCallees(caller string) []Reference {
 		return nil
 	}
 	return idx.callgraph.FindCallees(caller)
+}
+
+// GetCentrality returns centrality metrics for a symbol.
+func (idx *TreeSitterIndexer) GetCentrality(symbol string) SymbolCentrality {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	if idx.callgraph == nil {
+		return SymbolCentrality{Symbol: symbol}
+	}
+	return idx.callgraph.GetCentrality(symbol)
+}
+
+// TopSymbolsByCentrality returns the most important symbols by centrality score.
+func (idx *TreeSitterIndexer) TopSymbolsByCentrality(limit int) []SymbolCentrality {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+	if idx.callgraph == nil {
+		return nil
+	}
+	all := idx.callgraph.ComputeCentrality()
+	if len(all) <= limit {
+		return all
+	}
+	return all[:limit]
 }
 
 // GetSymbolContent retrieves the exact source code for a symbol using byte offsets.
@@ -312,6 +401,97 @@ func (idx *TreeSitterIndexer) GetSymbolContent(sym Symbol) (string, error) {
 // EstimateTokens estimates the token count for a string (rough: ~4 chars per token).
 func EstimateTokens(s string) int {
 	return (len(s) + 3) / 4
+}
+
+// ContextBundle holds a primary symbol with its related symbols.
+type ContextBundle struct {
+	Primary  SearchResult   `json:"primary"`
+	Related  []SearchResult `json:"related,omitempty"`
+	TotalTokens int         `json:"total_tokens"`
+}
+
+// SearchWithContext returns symbols with their related context (callees) bundled.
+// This provides complete context for understanding a symbol within a token budget.
+func (idx *TreeSitterIndexer) SearchWithContext(query string, maxTokens int) []ContextBundle {
+	// Search for primary symbols
+	primarySymbols := idx.search.Search(query, 20)
+	if len(primarySymbols) == 0 {
+		return nil
+	}
+
+	var bundles []ContextBundle
+	usedTokens := 0
+
+	for _, sym := range primarySymbols {
+		// Get primary symbol content
+		content, err := idx.GetSymbolContent(sym)
+		if err != nil {
+			continue
+		}
+		primaryTokens := EstimateTokens(content)
+
+		// Check if we can fit the primary symbol
+		if usedTokens+primaryTokens > maxTokens && len(bundles) > 0 {
+			break
+		}
+
+		bundle := ContextBundle{
+			Primary: SearchResult{
+				Symbol:  sym,
+				Content: content,
+				Tokens:  primaryTokens,
+			},
+			TotalTokens: primaryTokens,
+		}
+
+		// Find related symbols (callees)
+		callees := idx.FindCallees(sym.Name)
+		relatedBudget := (maxTokens - usedTokens - primaryTokens) / 2 // reserve half for other bundles
+		relatedTokens := 0
+
+		// De-duplicate callees by symbol name
+		seen := make(map[string]bool)
+		for _, ref := range callees {
+			if seen[ref.Symbol] {
+				continue
+			}
+			seen[ref.Symbol] = true
+
+			// Look up the callee symbol
+			calleeDefs := idx.LookupSymbol(ref.Symbol)
+			if len(calleeDefs) == 0 {
+				continue
+			}
+
+			callee := calleeDefs[0]
+			calleeContent, err := idx.GetSymbolContent(callee)
+			if err != nil {
+				continue
+			}
+
+			calleeTokens := EstimateTokens(calleeContent)
+			if relatedTokens+calleeTokens > relatedBudget {
+				continue
+			}
+
+			bundle.Related = append(bundle.Related, SearchResult{
+				Symbol:  callee,
+				Content: calleeContent,
+				Tokens:  calleeTokens,
+			})
+			relatedTokens += calleeTokens
+			bundle.TotalTokens += calleeTokens
+		}
+
+		bundles = append(bundles, bundle)
+		usedTokens += bundle.TotalTokens
+
+		if usedTokens >= maxTokens {
+			break
+		}
+	}
+
+	return bundles
 }
 
 // isBinary returns true if content looks like binary data.
