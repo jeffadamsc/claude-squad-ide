@@ -424,9 +424,19 @@ func (api *SessionAPI) StartSession(id string) error {
 	// so the status poller can continue to report "loading" state
 	if err := inst.Start(true); err != nil {
 		log.ErrorLog.Printf("StartSession failed for %q: %v", id, err)
-		// Reset status so the UI doesn't show it as permanently loading
+		// Clean up the session since it can never be opened in this state.
+		// The user will need to create a new session to retry.
 		api.mu.Lock()
-		inst.SetStatus(session.Ready)
+		if idx, ok := api.indexers[id]; ok {
+			idx.Stop()
+			delete(api.indexers, id)
+		}
+		if killErr := inst.Kill(); killErr != nil {
+			log.ErrorLog.Printf("StartSession cleanup for %q: %v", id, killErr)
+		}
+		delete(api.instances, id)
+		api.dirty = true
+		api.saveInstancesLocked()
 		api.mu.Unlock()
 		return fmt.Errorf("start session: %w", err)
 	}

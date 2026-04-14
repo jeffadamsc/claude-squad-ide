@@ -128,8 +128,9 @@ func (g *GitWorktree) setupFromRef() error {
 	return g.initAndFetchSubmodules()
 }
 
-// initAndFetchSubmodules initializes, fetches, and updates submodules in the worktree.
-// Skips silently if the repo has no submodules.
+// initAndFetchSubmodules initializes submodules in the worktree using each
+// submodule's remote default branch. Skips silently if the repo has no submodules.
+// Failures are logged but non-fatal — broken/empty submodules shouldn't block sessions.
 func (g *GitWorktree) initAndFetchSubmodules() error {
 	// Check if .gitmodules exists in the worktree
 	exec := g.getExecutor()
@@ -143,25 +144,12 @@ func (g *GitWorktree) initAndFetchSubmodules() error {
 		}
 	}
 
-	// Initialize submodules
-	if _, err := g.runGitCommand(g.worktreePath, "submodule", "update", "--init", "--recursive"); err != nil {
-		return fmt.Errorf("failed to init submodules: %w", err)
-	}
-
-	// Fetch latest from all submodule remotes
-	if _, err := g.runGitCommand(g.worktreePath, "submodule", "foreach", "--recursive", "git", "fetch", "origin"); err != nil {
-		log.WarningLog.Printf("failed to fetch submodule remotes: %v", err)
-		// Non-fatal: submodules are initialized, just not fetched
-	}
-
-	// Update each submodule to the latest commit on its remote default branch.
-	// The parent repo's submodule pointer is often stale, so users starting a
-	// session from origin/main expect submodules to also reflect the latest code.
-	// We try origin/HEAD, origin/main, then origin/master per-submodule (the
-	// shell fallback chain means one submodule failing doesn't block others).
-	if _, err := g.runGitCommand(g.worktreePath, "submodule", "foreach", "--recursive",
-		"sh", "-c", "git checkout origin/HEAD 2>/dev/null || git checkout origin/main 2>/dev/null || git checkout origin/master 2>/dev/null || true"); err != nil {
-		log.WarningLog.Printf("failed to update submodules to latest remote branch: %v", err)
+	// Initialize submodules using their remote default branch (--remote), not the
+	// SHA recorded in the parent repo. This avoids failures when recorded commits
+	// no longer exist (force-push, etc.) and ensures submodules match origin/main.
+	// Failures are non-fatal since empty repos or missing refs shouldn't block work.
+	if _, err := g.runGitCommand(g.worktreePath, "submodule", "update", "--init", "--recursive", "--remote"); err != nil {
+		log.WarningLog.Printf("submodule init had errors (continuing anyway): %v", err)
 	}
 
 	return nil
