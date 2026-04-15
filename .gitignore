@@ -8,4 +8,7 @@ cs
 build/*
 !build/appicon.png
 !build/darwin/
-bin/
+
+# Index cache
+.claude-squad/
+interface_check

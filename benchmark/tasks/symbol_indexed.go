@@ -6,9 +6,11 @@ func init() {
 	Register(&SymbolFindUsagesIndexed{})
 }
 
-// indexHint is the context suggestion based on pitlane-mcp recommendations
+// indexHint is the context suggestion for using MCP index tools
 const indexHint = `You have access to a cs-index MCP server with symbol lookup tools.
-Prefer using lookup_symbol or search_symbols to find definitions instead of grepping whole files.
+USE smart_lookup AS YOUR PRIMARY TOOL - it returns the symbol's code PLUS all functions it calls in one request.
+For simple "where is X" questions, use code_search.
+For "who calls X" questions, use find_references.
 Fall back to Grep/Read only when the index tools don't have what you need.`
 
 // SymbolFindSessionIndexed finds Session with index hint.

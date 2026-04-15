@@ -84,7 +84,7 @@ type SessionAPI struct {
 	hostManager   *sshPkg.HostManager
 	hostStore     *sshPkg.HostStore
 	keychainStore *sshPkg.KeychainStore
-	indexers      map[string]*SessionIndexer
+	indexers      map[string]Indexer
 	mcpServer     *MCPIndexServer
 }
 
@@ -123,7 +123,7 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 		hostManager:   hostMgr,
 		hostStore:     hostStore,
 		keychainStore: keychainStore,
-		indexers:      make(map[string]*SessionIndexer),
+		indexers:      make(map[string]Indexer),
 	}
 
 	// Load persisted sessions as metadata. Sessions that were running when
@@ -225,27 +225,22 @@ func (api *SessionAPI) setMCPConfigWithOpts(inst *session.Instance, opts CreateO
 }
 
 // mcpGuidance is the context hint for Claude to prefer MCP index tools.
-// Based on pitlane-mcp's CLAUDE.md recommendations.
 const mcpGuidance = `# MCP Index Server
 
-You have access to a cs-index MCP server with symbol lookup tools:
-- ` + "`mcp__cs-index__lookup_symbol`" + ` - Find where a symbol is defined
-- ` + "`mcp__cs-index__search_symbols`" + ` - Search for symbols by name pattern
-- ` + "`mcp__cs-index__get_file_outline`" + ` - Get symbols defined in a file
-- ` + "`mcp__cs-index__list_files`" + ` - List tracked files
-- ` + "`mcp__cs-index__read_lines`" + ` - Read specific line ranges
+You have access to a cs-index MCP server. Use these tools instead of Grep/Read for code navigation.
 
-## Usage Guidelines
+**START HERE - smart_lookup is your best tool:**
+- "Explain function X" → smart_lookup (returns X + everything X calls)
+- "How does Y work?" → smart_lookup (complete context in one call)
 
-**Prefer index tools for symbol lookups:**
-- Use ` + "`lookup_symbol`" + ` to find definitions instead of grepping whole files
-- Use ` + "`search_symbols`" + ` when you know part of a symbol name
-- Use ` + "`get_file_outline`" + ` to understand file structure before reading
+**Other tools:**
+- code_search - find symbols by name (use instead of Grep for functions/classes)
+- get_symbol_source - get exact source code for a symbol
+- find_references - find all callers of a function
+- get_call_graph - trace what a function calls
+- get_file_symbols - get file outline/structure
 
-**Fall back to Grep/Read when:**
-- The index tools don't have what you need
-- You need to search for text that isn't a symbol name
-- You need to read or edit file content
+Fall back to Grep/Read only for non-code files or regex search.
 `
 
 // writeMCPGuidance writes MCP usage hints to .claude/CLAUDE.md in the worktree.
@@ -399,6 +394,18 @@ func (api *SessionAPI) OpenSession(id string) (string, error) {
 		api.saveInstancesLocked()
 	}
 
+	// Auto-start indexer if not already running (for MCP tools)
+	if _, hasIdx := api.indexers[id]; !hasIdx && inst.HostID == "" {
+		worktree := inst.GetWorktreePath()
+		if worktree == "" {
+			worktree = inst.Path
+		}
+		idx := createIndexer(worktree, DefaultIndexer)
+		idx.Start()
+		api.indexers[id] = idx
+		log.InfoLog.Printf("OpenSession: auto-started indexer for %q at %s", id, worktree)
+	}
+
 	// Return the PTY process ID for WebSocket routing
 	ptyID := inst.GetProcessID()
 	if ptyID == "" {
@@ -452,6 +459,20 @@ func (api *SessionAPI) StartSession(id string) error {
 	api.mu.Lock()
 	api.dirty = true
 	api.saveInstancesLocked()
+
+	// Auto-start indexer for local sessions so MCP tools work immediately.
+	// Remote sessions aren't supported yet for indexing.
+	if inst.HostID == "" {
+		worktree := inst.GetWorktreePath()
+		if worktree == "" {
+			worktree = inst.Path
+		}
+		idx := createIndexer(worktree, DefaultIndexer)
+		idx.Start()
+		api.indexers[id] = idx
+		log.InfoLog.Printf("StartSession: auto-started indexer for %q at %s", id, worktree)
+	}
+
 	api.mu.Unlock()
 	return nil
 }
@@ -1251,7 +1272,7 @@ func (api *SessionAPI) IndexSession(sessionID string) error {
 	}
 	log.InfoLog.Printf("IndexSession(%s): starting indexer for worktree=%s", sessionID, worktree)
 
-	idx := NewSessionIndexer(worktree)
+	idx := createIndexer(worktree, DefaultIndexer)
 	idx.Start()
 	api.indexers[sessionID] = idx
 	return nil

@@ -6,8 +6,12 @@ This is a **Wails** application. Use `wails build` (not plain `go build`) to com
 the frontend, embed assets, and produce a macOS `.app` bundle:
 
 ```sh
-wails build
+wails build -skipbindings
 ```
+
+The `-skipbindings` flag is required because the tree-sitter indexer uses CGO, and
+Wails' binding generator doesn't support CGO dependencies. The TypeScript bindings
+are pre-generated and checked into the repo.
 
 The output is `build/bin/claude-squad.app`. Install it and create a CLI symlink:
 
@@ -33,8 +37,14 @@ Output: `build/bin/Claude Squad.dmg`
 For live-reload during development:
 
 ```sh
-wails dev
+wails dev -skipbindings
 ```
 
 Do NOT use `go build` or `go install` directly — they skip frontend compilation
 and macOS app bundling.
+
+### Regenerating Bindings
+
+If you add new exported methods to `SessionAPI` that need frontend access, temporarily
+remove the tree-sitter imports from `app/indexer_languages.go`, run `wails generate module`,
+then restore the imports. The bindings in `frontend/wailsjs/go/` are checked into git.

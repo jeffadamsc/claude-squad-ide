@@ -20,7 +20,7 @@ import (
 
 func TestMCPIndexServer_StartStop(t *testing.T) {
 	api := &SessionAPI{
-		indexers:  make(map[string]*SessionIndexer),
+		indexers:  make(map[string]Indexer),
 		instances: make(map[string]*session.Instance),
 	}
 
@@ -42,7 +42,7 @@ func TestMCPIndexServer_StartStop(t *testing.T) {
 
 func TestMCPIndexServer_GenerateMCPConfig(t *testing.T) {
 	api := &SessionAPI{
-		indexers:  make(map[string]*SessionIndexer),
+		indexers:  make(map[string]Indexer),
 		instances: make(map[string]*session.Instance),
 	}
 
@@ -90,7 +90,7 @@ type jsonRPCResponse struct {
 
 func TestMCPIndexServer_ToolsList(t *testing.T) {
 	api := &SessionAPI{
-		indexers:  make(map[string]*SessionIndexer),
+		indexers:  make(map[string]Indexer),
 		instances: make(map[string]*session.Instance),
 	}
 
@@ -127,7 +127,7 @@ func TestMCPIndexServer_ToolsList(t *testing.T) {
 
 func TestMCPIndexServer_LookupSymbol_NoIndexer(t *testing.T) {
 	api := &SessionAPI{
-		indexers:  make(map[string]*SessionIndexer),
+		indexers:  make(map[string]Indexer),
 		instances: make(map[string]*session.Instance),
 	}
 
@@ -167,15 +167,15 @@ func TestMCPIndexServer_LookupSymbol_NoIndexer(t *testing.T) {
 	require.NoError(t, err)
 	resp.Body.Close()
 
-	// Call tools/call with lookup_symbol
+	// Call tools/call with code_search
 	callReq := jsonRPCRequest{
 		JSONRPC: "2.0",
 		ID:      2,
 		Method:  "tools/call",
 		Params: map[string]interface{}{
-			"name": "lookup_symbol",
+			"name": "code_search",
 			"arguments": map[string]interface{}{
-				"name": "TestFunction",
+				"query": "TestFunction",
 			},
 		},
 	}
@@ -230,4 +230,371 @@ func TestMCPIndexServer_Standalone(t *testing.T) {
 	// Should be able to generate config
 	config := srv.GenerateMCPConfig("test")
 	assert.Contains(t, config, fmt.Sprintf(":%d", port))
+}
+
+func TestMCPGetSymbol(t *testing.T) {
+	// Create temp worktree with a Go file
+	tmp := t.TempDir()
+	os.MkdirAll(filepath.Join(tmp, ".git"), 0755)
+	cmd := exec.Command("git", "-C", tmp, "init")
+	require.NoError(t, cmd.Run())
+
+	code := []byte(`package main
+
+func Hello() string {
+    return "hello"
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "main.go"), code, 0644))
+	cmd = exec.Command("git", "-C", tmp, "add", "main.go")
+	require.NoError(t, cmd.Run())
+
+	// Create and start indexer
+	idx := NewTreeSitterIndexer(tmp)
+	idx.Start()
+	time.Sleep(200 * time.Millisecond)
+
+	// Create MCP server
+	srv := NewMCPIndexServerStandaloneTS(idx)
+	require.NotNil(t, srv)
+
+	port, err := srv.Start()
+	require.NoError(t, err)
+	assert.Greater(t, port, 0)
+	defer srv.Stop()
+	defer idx.Stop()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/mcp/test-session", port)
+
+	// Initialize first
+	initReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+		Params: map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo": map[string]interface{}{
+				"name":    "test-client",
+				"version": "1.0.0",
+			},
+		},
+	}
+	initBody, _ := json.Marshal(initReq)
+	resp, err := http.Post(url, "application/json", bytes.NewReader(initBody))
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Send initialized notification
+	initedReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+	}
+	initedBody, _ := json.Marshal(initedReq)
+	resp, err = http.Post(url, "application/json", bytes.NewReader(initedBody))
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Test get_symbol_source tool
+	callReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/call",
+		Params: map[string]interface{}{
+			"name": "get_symbol_source",
+			"arguments": map[string]interface{}{
+				"name": "Hello",
+			},
+		},
+	}
+
+	callBody, _ := json.Marshal(callReq)
+	resp, err = http.Post(url, "application/json", bytes.NewReader(callBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var rpcResp jsonRPCResponse
+	err = json.Unmarshal(body, &rpcResp)
+	require.NoError(t, err)
+	assert.NotNil(t, rpcResp.Result)
+	// The result should contain the symbol info (or "No symbol found" if indexing is incomplete)
+}
+
+func TestMCPIndexStatus(t *testing.T) {
+	// Create temp worktree with a Go file
+	tmp := t.TempDir()
+	os.MkdirAll(filepath.Join(tmp, ".git"), 0755)
+	cmd := exec.Command("git", "-C", tmp, "init")
+	require.NoError(t, cmd.Run())
+
+	code := []byte(`package main
+
+func Hello() string {
+    return "hello"
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "main.go"), code, 0644))
+	cmd = exec.Command("git", "-C", tmp, "add", "main.go")
+	require.NoError(t, cmd.Run())
+
+	// Create and start indexer
+	idx := NewTreeSitterIndexer(tmp)
+	idx.Start()
+	time.Sleep(200 * time.Millisecond)
+
+	// Create MCP server
+	srv := NewMCPIndexServerStandaloneTS(idx)
+	require.NotNil(t, srv)
+
+	port, err := srv.Start()
+	require.NoError(t, err)
+	assert.Greater(t, port, 0)
+	defer srv.Stop()
+	defer idx.Stop()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/mcp/test-session", port)
+
+	// Initialize first
+	initReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+		Params: map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo": map[string]interface{}{
+				"name":    "test-client",
+				"version": "1.0.0",
+			},
+		},
+	}
+	initBody, _ := json.Marshal(initReq)
+	resp, err := http.Post(url, "application/json", bytes.NewReader(initBody))
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Send initialized notification
+	initedReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+	}
+	initedBody, _ := json.Marshal(initedReq)
+	resp, err = http.Post(url, "application/json", bytes.NewReader(initedBody))
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Test index_status tool
+	callReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/call",
+		Params: map[string]interface{}{
+			"name":      "index_status",
+			"arguments": map[string]interface{}{},
+		},
+	}
+
+	callBody, _ := json.Marshal(callReq)
+	resp, err = http.Post(url, "application/json", bytes.NewReader(callBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var rpcResp jsonRPCResponse
+	err = json.Unmarshal(body, &rpcResp)
+	require.NoError(t, err)
+	assert.NotNil(t, rpcResp.Result)
+	// Result should contain status info
+	assert.Contains(t, string(rpcResp.Result), "tree-sitter")
+}
+
+func TestMCPFindCallers(t *testing.T) {
+	// Create temp worktree with Go files that have calls
+	tmp := t.TempDir()
+	os.MkdirAll(filepath.Join(tmp, ".git"), 0755)
+	cmd := exec.Command("git", "-C", tmp, "init")
+	require.NoError(t, cmd.Run())
+
+	code := []byte(`package main
+
+func Hello() string {
+    return "hello"
+}
+
+func Greet() string {
+    return Hello() + " world"
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "main.go"), code, 0644))
+	cmd = exec.Command("git", "-C", tmp, "add", "main.go")
+	require.NoError(t, cmd.Run())
+
+	// Create and start indexer
+	idx := NewTreeSitterIndexer(tmp)
+	idx.Start()
+	time.Sleep(200 * time.Millisecond)
+
+	// Create MCP server
+	srv := NewMCPIndexServerStandaloneTS(idx)
+	require.NotNil(t, srv)
+
+	port, err := srv.Start()
+	require.NoError(t, err)
+	assert.Greater(t, port, 0)
+	defer srv.Stop()
+	defer idx.Stop()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/mcp/test-session", port)
+
+	// Initialize first
+	initReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+		Params: map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo": map[string]interface{}{
+				"name":    "test-client",
+				"version": "1.0.0",
+			},
+		},
+	}
+	initBody, _ := json.Marshal(initReq)
+	resp, err := http.Post(url, "application/json", bytes.NewReader(initBody))
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Send initialized notification
+	initedReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+	}
+	initedBody, _ := json.Marshal(initedReq)
+	resp, err = http.Post(url, "application/json", bytes.NewReader(initedBody))
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Test find_references tool
+	callReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/call",
+		Params: map[string]interface{}{
+			"name": "find_references",
+			"arguments": map[string]interface{}{
+				"symbol": "Hello",
+			},
+		},
+	}
+
+	callBody, _ := json.Marshal(callReq)
+	resp, err = http.Post(url, "application/json", bytes.NewReader(callBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var rpcResp jsonRPCResponse
+	err = json.Unmarshal(body, &rpcResp)
+	require.NoError(t, err)
+	assert.NotNil(t, rpcResp.Result)
+	// Result should contain callers info or "No callers found"
+}
+
+func TestMCPFindCallees(t *testing.T) {
+	// Create temp worktree with Go files that have calls
+	tmp := t.TempDir()
+	os.MkdirAll(filepath.Join(tmp, ".git"), 0755)
+	cmd := exec.Command("git", "-C", tmp, "init")
+	require.NoError(t, cmd.Run())
+
+	code := []byte(`package main
+
+func Hello() string {
+    return "hello"
+}
+
+func Greet() string {
+    return Hello() + " world"
+}
+`)
+	require.NoError(t, os.WriteFile(filepath.Join(tmp, "main.go"), code, 0644))
+	cmd = exec.Command("git", "-C", tmp, "add", "main.go")
+	require.NoError(t, cmd.Run())
+
+	// Create and start indexer
+	idx := NewTreeSitterIndexer(tmp)
+	idx.Start()
+	time.Sleep(200 * time.Millisecond)
+
+	// Create MCP server
+	srv := NewMCPIndexServerStandaloneTS(idx)
+	require.NotNil(t, srv)
+
+	port, err := srv.Start()
+	require.NoError(t, err)
+	assert.Greater(t, port, 0)
+	defer srv.Stop()
+	defer idx.Stop()
+
+	url := fmt.Sprintf("http://127.0.0.1:%d/mcp/test-session", port)
+
+	// Initialize first
+	initReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      1,
+		Method:  "initialize",
+		Params: map[string]interface{}{
+			"protocolVersion": "2024-11-05",
+			"capabilities":    map[string]interface{}{},
+			"clientInfo": map[string]interface{}{
+				"name":    "test-client",
+				"version": "1.0.0",
+			},
+		},
+	}
+	initBody, _ := json.Marshal(initReq)
+	resp, err := http.Post(url, "application/json", bytes.NewReader(initBody))
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Send initialized notification
+	initedReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		Method:  "notifications/initialized",
+	}
+	initedBody, _ := json.Marshal(initedReq)
+	resp, err = http.Post(url, "application/json", bytes.NewReader(initedBody))
+	require.NoError(t, err)
+	resp.Body.Close()
+
+	// Test get_call_graph tool
+	callReq := jsonRPCRequest{
+		JSONRPC: "2.0",
+		ID:      2,
+		Method:  "tools/call",
+		Params: map[string]interface{}{
+			"name": "get_call_graph",
+			"arguments": map[string]interface{}{
+				"symbol": "Greet",
+			},
+		},
+	}
+
+	callBody, _ := json.Marshal(callReq)
+	resp, err = http.Post(url, "application/json", bytes.NewReader(callBody))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var rpcResp jsonRPCResponse
+	err = json.Unmarshal(body, &rpcResp)
+	require.NoError(t, err)
+	assert.NotNil(t, rpcResp.Result)
+	// Result should contain callees info or "No callees found"
 }

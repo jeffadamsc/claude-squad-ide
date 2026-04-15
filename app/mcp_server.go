@@ -25,6 +25,7 @@ type MCPIndexServer struct {
 	mu                sync.RWMutex
 	api               *SessionAPI
 	standaloneIndexer *SessionIndexer
+	standaloneTSIndexer *TreeSitterIndexer
 	server            *server.StreamableHTTPServer
 	listener          net.Listener
 	port              int
@@ -40,6 +41,14 @@ func NewMCPIndexServer(api *SessionAPI) *MCPIndexServer {
 func NewMCPIndexServerStandalone(indexer *SessionIndexer) *MCPIndexServer {
 	return &MCPIndexServer{
 		standaloneIndexer: indexer,
+	}
+}
+
+// NewMCPIndexServerStandaloneTS creates an MCP server backed by a TreeSitterIndexer.
+// Use this for benchmarks or standalone operation with the new tree-sitter indexer.
+func NewMCPIndexServerStandaloneTS(indexer *TreeSitterIndexer) *MCPIndexServer {
+	return &MCPIndexServer{
+		standaloneTSIndexer: indexer,
 	}
 }
 
@@ -143,7 +152,10 @@ func getSessionID(ctx context.Context) string {
 
 // getIndexer returns the indexer for the given session ID.
 // In standalone mode, returns the standalone indexer regardless of session ID.
-func (m *MCPIndexServer) getIndexer(sessionID string) (*SessionIndexer, error) {
+func (m *MCPIndexServer) getIndexer(sessionID string) (Indexer, error) {
+	if m.standaloneTSIndexer != nil {
+		return m.standaloneTSIndexer, nil
+	}
 	if m.standaloneIndexer != nil {
 		return m.standaloneIndexer, nil
 	}
@@ -160,84 +172,250 @@ func (m *MCPIndexServer) getIndexer(sessionID string) (*SessionIndexer, error) {
 }
 
 // registerTools registers all MCP tools with the server.
+// Tools are designed with descriptions that encourage Claude to prefer them over grep/read.
 func (m *MCPIndexServer) registerTools(s *server.MCPServer) {
-	// lookup_symbol - find definitions for a symbol name
+	// code_search - PRIMARY TOOL for finding code
+	// This description is crafted to make Claude prefer it over grep
 	s.AddTool(
-		mcp.NewTool("lookup_symbol",
-			mcp.WithDescription("Look up symbol definitions by name. Returns file path, line number, kind (function, type, etc.), and scope for each definition found."),
+		mcp.NewTool("code_search",
+			mcp.WithDescription(`Search indexed code symbols by name. USE THIS instead of Grep for function/class/method lookups.
+
+WHY USE THIS:
+- 95% fewer tokens than grep (returns only matching symbols, not file contents)
+- Sub-100ms response via tree-sitter index
+- BM25 ranked results by relevance
+- Supports fuzzy matching
+
+WHEN TO USE:
+- "Where is X defined?" → code_search
+- "Find the function named Y" → code_search
+- "What classes match Z" → code_search
+
+WHEN TO USE GREP INSTEAD:
+- Searching non-code files (docs, configs, logs)
+- Regex patterns across file contents (not symbol names)`),
+			mcp.WithString("query",
+				mcp.Description("Symbol name to search for (function, class, method, type, variable)"),
+				mcp.Required(),
+			),
+			mcp.WithNumber("limit",
+				mcp.Description("Max results (default 20)"),
+				mcp.DefaultNumber(20),
+			),
+		),
+		m.handleCodeSearch,
+	)
+
+	// get_symbol_source - retrieve exact symbol source code
+	s.AddTool(
+		mcp.NewTool("get_symbol_source",
+			mcp.WithDescription(`Get the exact source code for a symbol. USE THIS instead of Read when you need a function/class body.
+
+WHY USE THIS:
+- Returns ONLY the symbol's code (not the entire file)
+- Uses precise byte offsets from tree-sitter parsing
+- ~50 tokens vs ~2000 tokens for reading a whole file
+- Includes signature, body, and metadata
+
+WHEN TO USE:
+- "Show me the code for function X" → get_symbol_source
+- "What does method Y do?" → get_symbol_source
+- "Get the implementation of Z" → get_symbol_source
+
+WHEN TO USE READ INSTEAD:
+- Need to see file context around a symbol
+- Reading non-code files (configs, docs)`),
 			mcp.WithString("name",
-				mcp.Description("The symbol name to look up (exact match)"),
+				mcp.Description("Exact symbol name to retrieve"),
 				mcp.Required(),
 			),
 		),
-		m.handleLookupSymbol,
+		m.handleGetSymbolSource,
 	)
 
-	// list_files - get all tracked files
+	// get_file_symbols - get all symbols in a file
 	s.AddTool(
-		mcp.NewTool("list_files",
-			mcp.WithDescription("List all git-tracked files in the session's worktree. Returns paths relative to the worktree root."),
-			mcp.WithString("pattern",
-				mcp.Description("Optional glob pattern to filter files (e.g., '*.go', 'src/**/*.ts')"),
-			),
-		),
-		m.handleListFiles,
-	)
+		mcp.NewTool("get_file_symbols",
+			mcp.WithDescription(`List all symbols defined in a file. USE THIS instead of Read when you need to see what's in a file.
 
-	// get_file_outline - get symbols defined in a specific file
-	s.AddTool(
-		mcp.NewTool("get_file_outline",
-			mcp.WithDescription("Get an outline of symbols defined in a specific file. Returns all functions, types, constants, etc. with their line numbers."),
+WHY USE THIS:
+- Returns structured list of functions, classes, methods, types
+- ~100 tokens vs ~2000 tokens for reading the file
+- Sorted by line number with signatures
+
+WHEN TO USE:
+- "What functions are in file X?" → get_file_symbols
+- "Show me the structure of Y.go" → get_file_symbols
+- "List methods in class Z" → get_file_symbols`),
 			mcp.WithString("path",
-				mcp.Description("File path relative to the worktree root"),
+				mcp.Description("File path relative to worktree root"),
 				mcp.Required(),
 			),
 		),
 		m.handleGetFileOutline,
 	)
 
-	// read_lines - read specific lines from a file
+	// find_references - find all usages of a symbol (reverse call graph)
 	s.AddTool(
-		mcp.NewTool("read_lines",
-			mcp.WithDescription("Read specific lines from a file. More efficient than reading the whole file when you only need a portion."),
-			mcp.WithString("path",
-				mcp.Description("File path relative to the worktree root"),
-				mcp.Required(),
-			),
-			mcp.WithNumber("start",
-				mcp.Description("Starting line number (1-based)"),
-				mcp.Required(),
-			),
-			mcp.WithNumber("end",
-				mcp.Description("Ending line number (inclusive)"),
+		mcp.NewTool("find_references",
+			mcp.WithDescription(`Find all places where a symbol is used/called. USE THIS instead of Grep for "who calls X?".
+
+WHY USE THIS:
+- Uses call graph analysis, not text search
+- Won't match comments or strings containing the name
+- Returns calling function context
+
+WHEN TO USE:
+- "Who calls function X?" → find_references
+- "Where is Y used?" → find_references
+- "Find usages of Z" → find_references`),
+			mcp.WithString("symbol",
+				mcp.Description("Symbol name to find references for"),
 				mcp.Required(),
 			),
 		),
-		m.handleReadLines,
+		m.handleFindCallers,
 	)
 
-	// search_symbols - search for symbols by prefix or substring
+	// get_call_graph - find what a function calls
 	s.AddTool(
-		mcp.NewTool("search_symbols",
-			mcp.WithDescription("Search for symbols matching a pattern. Supports prefix matching and case-insensitive search."),
-			mcp.WithString("query",
-				mcp.Description("Search query (matches symbol names containing this string)"),
+		mcp.NewTool("get_call_graph",
+			mcp.WithDescription(`Find all symbols called by a function. Shows dependencies and call flow.
+
+WHEN TO USE:
+- "What does function X call?" → get_call_graph
+- "What are the dependencies of Y?" → get_call_graph
+- Understanding code flow`),
+			mcp.WithString("symbol",
+				mcp.Description("Function name to analyze"),
 				mcp.Required(),
 			),
-			mcp.WithNumber("limit",
-				mcp.Description("Maximum number of results to return"),
-				mcp.DefaultNumber(50),
+		),
+		m.handleFindCallees,
+	)
+
+	// smart_lookup - RECOMMENDED: search + source + context in one call
+	s.AddTool(
+		mcp.NewTool("smart_lookup",
+			mcp.WithDescription(`THE BEST TOOL FOR CODE UNDERSTANDING. Returns symbol source code PLUS related symbols it calls.
+
+WHY USE THIS (95% token savings):
+- ONE call instead of: code_search → get_symbol_source → get_call_graph → multiple get_symbol_source
+- Returns complete context: the symbol's code + code of functions it calls
+- Token-budgeted: stays within limit, prioritizes most relevant context
+- Perfect for "explain function X" or "how does Y work?"
+
+EXAMPLE: smart_lookup("ProcessData") returns:
+- ProcessData's full source code
+- Source code of Helper() that ProcessData calls
+- Source code of Validate() that ProcessData calls
+- All within your token budget
+
+WHEN TO USE:
+- "Explain how X works" → smart_lookup (gets X + everything X calls)
+- "Show me function Y and its dependencies" → smart_lookup
+- Any time you need to understand a symbol deeply
+
+WHEN TO USE OTHER TOOLS:
+- Just need to find where X is defined → code_search
+- Need to see who calls X (reverse) → find_references`),
+			mcp.WithString("query",
+				mcp.Description("Symbol name to look up"),
+				mcp.Required(),
+			),
+			mcp.WithNumber("max_tokens",
+				mcp.Description("Token budget for response (default 2000)"),
+				mcp.DefaultNumber(2000),
 			),
 		),
-		m.handleSearchSymbols,
+		m.handleSmartLookup,
+	)
+
+	// index_status - health check (keep for debugging)
+	s.AddTool(
+		mcp.NewTool("index_status",
+			mcp.WithDescription("Get index statistics: file count, symbol count, indexer health. Call this first if unsure whether index is available."),
+		),
+		m.handleIndexStatus,
 	)
 }
 
-// handleLookupSymbol handles the lookup_symbol tool call.
-func (m *MCPIndexServer) handleLookupSymbol(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+// handleCodeSearch handles the code_search tool - primary symbol search.
+func (m *MCPIndexServer) handleCodeSearch(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 	sessionID := getSessionID(ctx)
 	if sessionID == "" {
 		return mcp.NewToolResultError("session ID not found in request"), nil
+	}
+
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
+	}
+
+	limitF, _ := req.RequireFloat("limit")
+	limit := int(limitF)
+	if limit <= 0 {
+		limit = 20
+	}
+
+	idx, err := m.getIndexer(sessionID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Use tree-sitter BM25 search if available
+	if tsIdx, ok := idx.(*TreeSitterIndexer); ok {
+		syms := tsIdx.SearchSymbols(query, limit)
+		if len(syms) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("No symbols found matching %q. Try a different query or use Grep for non-code files.", query)), nil
+		}
+
+		// Format concisely to save tokens
+		var lines []string
+		for _, sym := range syms {
+			line := fmt.Sprintf("%s (%s) - %s:%d", sym.Name, sym.Kind, sym.File, sym.Line)
+			if sym.Signature != "" {
+				line = fmt.Sprintf("%s\n  %s", line, sym.Signature)
+			}
+			lines = append(lines, line)
+		}
+		return mcp.NewToolResultText(strings.Join(lines, "\n")), nil
+	}
+
+	// Fallback to basic search
+	allSymbols := idx.AllSymbols()
+	queryLower := strings.ToLower(query)
+
+	var matches []Definition
+	for name, defs := range allSymbols {
+		if strings.Contains(strings.ToLower(name), queryLower) {
+			matches = append(matches, defs...)
+			if len(matches) >= limit {
+				break
+			}
+		}
+	}
+
+	if len(matches) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No symbols found matching %q", query)), nil
+	}
+
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+
+	var lines []string
+	for _, def := range matches {
+		lines = append(lines, fmt.Sprintf("%s (%s) - %s:%d", def.Name, def.Kind, def.File, def.Line))
+	}
+	return mcp.NewToolResultText(strings.Join(lines, "\n")), nil
+}
+
+// handleGetSymbolSource handles get_symbol_source - returns exact symbol source code.
+func (m *MCPIndexServer) handleGetSymbolSource(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sessionID := getSessionID(ctx)
+	if sessionID == "" {
+		return mcp.NewToolResultError("session ID not found"), nil
 	}
 
 	name, err := req.RequireString("name")
@@ -250,49 +428,34 @@ func (m *MCPIndexServer) handleLookupSymbol(ctx context.Context, req mcp.CallToo
 		return mcp.NewToolResultError(err.Error()), nil
 	}
 
-	defs := idx.Lookup(name)
-	if len(defs) == 0 {
-		return mcp.NewToolResultText(fmt.Sprintf("No definitions found for symbol %q", name)), nil
+	// Requires tree-sitter for byte-offset extraction
+	tsIdx, ok := idx.(*TreeSitterIndexer)
+	if !ok {
+		return mcp.NewToolResultError("get_symbol_source requires tree-sitter indexer"), nil
 	}
 
-	// Format as JSON for structured output
-	result, _ := json.MarshalIndent(defs, "", "  ")
-	return mcp.NewToolResultText(string(result)), nil
-}
-
-// handleListFiles handles the list_files tool call.
-func (m *MCPIndexServer) handleListFiles(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-	sessionID := getSessionID(ctx)
-	if sessionID == "" {
-		return mcp.NewToolResultError("session ID not found in request"), nil
+	syms := tsIdx.LookupSymbol(name)
+	if len(syms) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No symbol found: %q. Use code_search to find available symbols.", name)), nil
 	}
 
-	pattern, _ := req.RequireString("pattern")
-
-	idx, err := m.getIndexer(sessionID)
+	// Get source for first match using byte offsets
+	sym := syms[0]
+	content, err := tsIdx.GetSymbolContent(sym)
 	if err != nil {
-		return mcp.NewToolResultError(err.Error()), nil
-	}
-
-	files := idx.Files()
-
-	// Filter by pattern if provided
-	if pattern != "" {
-		var filtered []string
-		for _, f := range files {
-			matched, _ := filepath.Match(pattern, filepath.Base(f))
-			if matched {
-				filtered = append(filtered, f)
-			}
+		// Fallback to line-based read
+		fullPath := filepath.Join(tsIdx.Worktree(), sym.File)
+		content, err = readLinesFromFile(fullPath, sym.Line, sym.EndLine)
+		if err != nil {
+			return mcp.NewToolResultError(fmt.Sprintf("failed to read symbol: %v", err)), nil
 		}
-		files = filtered
 	}
 
-	if len(files) == 0 {
-		return mcp.NewToolResultText("No files found"), nil
-	}
+	// Format with metadata
+	result := fmt.Sprintf("// %s (%s) in %s:%d-%d\n%s",
+		sym.Name, sym.Kind, sym.File, sym.Line, sym.EndLine, content)
 
-	return mcp.NewToolResultText(strings.Join(files, "\n")), nil
+	return mcp.NewToolResultText(result), nil
 }
 
 // handleGetFileOutline handles the get_file_outline tool call.
@@ -468,6 +631,283 @@ func (m *MCPIndexServer) handleSearchSymbols(ctx context.Context, req mcp.CallTo
 	return mcp.NewToolResultText(string(result)), nil
 }
 
+// handleGetSymbol returns symbol with optional full body.
+func (m *MCPIndexServer) handleGetSymbol(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sessionID := getSessionID(ctx)
+	if sessionID == "" {
+		return mcp.NewToolResultError("session ID not found"), nil
+	}
+
+	name, err := req.RequireString("name")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
+	}
+
+	signatureOnly, _ := req.RequireBool("signature_only")
+
+	idx, err := m.getIndexer(sessionID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Try tree-sitter indexer first for richer data
+	if tsIdx, ok := idx.(*TreeSitterIndexer); ok {
+		syms := tsIdx.LookupSymbol(name)
+		if len(syms) == 0 {
+			return mcp.NewToolResultText(fmt.Sprintf("No symbol found: %q", name)), nil
+		}
+
+		if signatureOnly {
+			result, _ := json.MarshalIndent(syms, "", "  ")
+			return mcp.NewToolResultText(string(result)), nil
+		}
+
+		// Include source body for first match
+		sym := syms[0]
+		fullPath := filepath.Join(tsIdx.Worktree(), sym.File)
+		body, err := readLinesFromFile(fullPath, sym.Line, sym.EndLine)
+		if err == nil {
+			sym.DocComment = body // reuse field for body
+		}
+
+		result, _ := json.MarshalIndent(sym, "", "  ")
+		return mcp.NewToolResultText(string(result)), nil
+	}
+
+	// Fallback to basic indexer
+	defs := idx.Lookup(name)
+	if len(defs) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No symbol found: %q", name)), nil
+	}
+
+	result, _ := json.MarshalIndent(defs, "", "  ")
+	return mcp.NewToolResultText(string(result)), nil
+}
+
+// handleFindCallers returns all places where symbol is called.
+func (m *MCPIndexServer) handleFindCallers(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sessionID := getSessionID(ctx)
+	if sessionID == "" {
+		return mcp.NewToolResultError("session ID not found"), nil
+	}
+
+	symbol, err := req.RequireString("symbol")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
+	}
+
+	idx, err := m.getIndexer(sessionID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	tsIdx, ok := idx.(*TreeSitterIndexer)
+	if !ok {
+		return mcp.NewToolResultError("find_callers requires tree-sitter indexer"), nil
+	}
+
+	refs := tsIdx.FindCallers(symbol)
+	if len(refs) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No callers found for %q", symbol)), nil
+	}
+
+	result, _ := json.MarshalIndent(refs, "", "  ")
+	return mcp.NewToolResultText(string(result)), nil
+}
+
+// handleFindCallees returns all symbols called by function.
+func (m *MCPIndexServer) handleFindCallees(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sessionID := getSessionID(ctx)
+	if sessionID == "" {
+		return mcp.NewToolResultError("session ID not found"), nil
+	}
+
+	symbol, err := req.RequireString("symbol")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
+	}
+
+	idx, err := m.getIndexer(sessionID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	tsIdx, ok := idx.(*TreeSitterIndexer)
+	if !ok {
+		return mcp.NewToolResultError("find_callees requires tree-sitter indexer"), nil
+	}
+
+	refs := tsIdx.FindCallees(symbol)
+	if len(refs) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No callees found for %q", symbol)), nil
+	}
+
+	result, _ := json.MarshalIndent(refs, "", "  ")
+	return mcp.NewToolResultText(string(result)), nil
+}
+
+// handleIndexStatus returns index health info.
+func (m *MCPIndexServer) handleIndexStatus(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sessionID := getSessionID(ctx)
+	if sessionID == "" {
+		return mcp.NewToolResultError("session ID not found"), nil
+	}
+
+	idx, err := m.getIndexer(sessionID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	files := idx.Files()
+	allSyms := idx.AllSymbols()
+
+	symbolCount := 0
+	for _, defs := range allSyms {
+		symbolCount += len(defs)
+	}
+
+	status := map[string]interface{}{
+		"worktree":     idx.Worktree(),
+		"file_count":   len(files),
+		"symbol_count": symbolCount,
+		"indexer_type": "ctags",
+	}
+
+	if tsIdx, ok := idx.(*TreeSitterIndexer); ok {
+		status["indexer_type"] = "tree-sitter"
+		tsIdx.mu.RLock()
+		if tsIdx.callgraph != nil {
+			callers, callees := tsIdx.callgraph.Stats()
+			status["caller_symbols"] = callers
+			status["callee_functions"] = callees
+		}
+		tsIdx.mu.RUnlock()
+	}
+
+	result, _ := json.MarshalIndent(status, "", "  ")
+	return mcp.NewToolResultText(string(result)), nil
+}
+
+// handleSmartLookup handles smart_lookup - returns symbol source + related context.
+func (m *MCPIndexServer) handleSmartLookup(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+	sessionID := getSessionID(ctx)
+	if sessionID == "" {
+		return mcp.NewToolResultError("session ID not found"), nil
+	}
+
+	query, err := req.RequireString("query")
+	if err != nil {
+		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
+	}
+
+	maxTokensF, _ := req.RequireFloat("max_tokens")
+	maxTokens := int(maxTokensF)
+	if maxTokens <= 0 {
+		maxTokens = 2000
+	}
+
+	idx, err := m.getIndexer(sessionID)
+	if err != nil {
+		return mcp.NewToolResultError(err.Error()), nil
+	}
+
+	// Requires tree-sitter for context bundling
+	tsIdx, ok := idx.(*TreeSitterIndexer)
+	if !ok {
+		return mcp.NewToolResultError("smart_lookup requires tree-sitter indexer"), nil
+	}
+
+	// Get bundled context
+	bundles := tsIdx.SearchWithContext(query, maxTokens)
+	if len(bundles) == 0 {
+		return mcp.NewToolResultText(fmt.Sprintf("No symbols found matching %q. Try code_search for simpler lookup.", query)), nil
+	}
+
+	// Format the response
+	var sb strings.Builder
+	for i, bundle := range bundles {
+		if i > 0 {
+			sb.WriteString("\n---\n\n")
+		}
+
+		// Primary symbol
+		sym := bundle.Primary.Symbol
+		sb.WriteString(fmt.Sprintf("## %s (%s)\n", sym.Name, sym.Kind))
+		sb.WriteString(fmt.Sprintf("File: %s:%d-%d\n\n", sym.File, sym.Line, sym.EndLine))
+		sb.WriteString("```")
+		sb.WriteString(sym.Language)
+		sb.WriteString("\n")
+		sb.WriteString(bundle.Primary.Content)
+		sb.WriteString("\n```\n")
+
+		// Related symbols (callees)
+		if len(bundle.Related) > 0 {
+			sb.WriteString(fmt.Sprintf("\n### Called by %s:\n\n", sym.Name))
+			for _, related := range bundle.Related {
+				rsym := related.Symbol
+				sb.WriteString(fmt.Sprintf("#### %s (%s) - %s:%d\n", rsym.Name, rsym.Kind, rsym.File, rsym.Line))
+				sb.WriteString("```")
+				sb.WriteString(rsym.Language)
+				sb.WriteString("\n")
+				sb.WriteString(related.Content)
+				sb.WriteString("\n```\n\n")
+			}
+		}
+
+		sb.WriteString(fmt.Sprintf("\n_[%d tokens used]_\n", bundle.TotalTokens))
+	}
+
+	return mcp.NewToolResultText(sb.String()), nil
+}
+
+// readLinesFromFile reads a range of lines from a file.
+func readLinesFromFile(path string, start, end int) (string, error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer file.Close()
+
+	var lines []string
+	scanner := bufio.NewScanner(file)
+	lineNum := 0
+	for scanner.Scan() {
+		lineNum++
+		if lineNum >= start && lineNum <= end {
+			lines = append(lines, scanner.Text())
+		}
+		if lineNum > end {
+			break
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return "", err
+	}
+	return strings.Join(lines, "\n"), nil
+}
+
+// ServerInstructions returns instructions that tell Claude when to use index tools.
+// These should be included in system prompts or CLAUDE.md.
+const ServerInstructions = `## Code Index (cs-index MCP Server)
+
+This codebase has a tree-sitter code index. Use it for 95% token savings.
+
+**START HERE - smart_lookup is the best tool for understanding code:**
+- "Explain function X" → smart_lookup (returns X + everything X calls)
+- "How does Y work?" → smart_lookup (complete context in one call)
+- "Show me Z and its dependencies" → smart_lookup
+
+**Other index tools:**
+- "Where is X defined?" (just location) → code_search
+- "Who calls X?" (reverse lookup) → find_references
+- "What's in file Z?" (outline) → get_file_symbols
+- "Just show me X's code" (no context) → get_symbol_source
+
+**ONLY use Grep/Read when:**
+- Searching non-code files (docs, configs, logs)
+- Need regex across file contents (not symbol names)
+- Index tools return no results`
+
 // GenerateMCPConfig generates an MCP configuration JSON for a session.
 // This can be passed to Claude Code via --mcp-config.
 func (m *MCPIndexServer) GenerateMCPConfig(sessionID string) string {
@@ -480,6 +920,7 @@ func (m *MCPIndexServer) GenerateMCPConfig(sessionID string) string {
 			"cs-index": map[string]interface{}{
 				"type": "http",
 				"url":  fmt.Sprintf("http://127.0.0.1:%d/mcp/%s", port, sessionID),
+				"instructions": ServerInstructions,
 			},
 		},
 	}

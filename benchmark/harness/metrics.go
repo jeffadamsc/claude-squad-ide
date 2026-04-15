@@ -9,8 +9,9 @@ import (
 
 // TaskMetrics holds the metrics collected from a single task run.
 type TaskMetrics struct {
-	TaskName   string
-	MCPEnabled bool
+	TaskName    string
+	MCPEnabled  bool
+	IndexerType string // "none", "ctags", or "treesitter"
 
 	// Token usage
 	InputTokens  int

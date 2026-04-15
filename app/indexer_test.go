@@ -156,3 +156,20 @@ func TestSessionIndexer_Refresh(t *testing.T) {
 	files := idx.Files()
 	assert.Contains(t, files, "helper.go")
 }
+
+func TestSymbolFields(t *testing.T) {
+	s := Symbol{
+		Name:      "MyFunc",
+		Kind:      "function",
+		File:      "main.go",
+		Line:      10,
+		EndLine:   25,
+		Column:    1,
+		Language:  "go",
+		Scope:     "main",
+		Signature: "func MyFunc(x int) error",
+	}
+	if s.EndLine <= s.Line {
+		t.Error("EndLine should be after Line")
+	}
+}

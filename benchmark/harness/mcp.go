@@ -7,19 +7,47 @@ import (
 	"claude-squad/app"
 )
 
+// IndexerType specifies which indexer backend to use.
+type IndexerType string
+
+const (
+	IndexerCtags      IndexerType = "ctags"
+	IndexerTreeSitter IndexerType = "treesitter"
+)
+
 // MCPServer wraps the MCP index server for benchmark use.
 type MCPServer struct {
-	indexer *app.SessionIndexer
-	server  *app.MCPIndexServer
-	port    int
+	indexer     app.Indexer
+	tsIndexer   *app.TreeSitterIndexer // for tree-sitter specific methods
+	server      *app.MCPIndexServer
+	port        int
+	indexerType IndexerType
 }
 
-// StartMCPServer starts an MCP server for the given workdir.
+// StartMCPServer starts an MCP server for the given workdir using ctags.
 func StartMCPServer(workdir string) (*MCPServer, error) {
-	indexer := app.NewSessionIndexer(workdir)
-	indexer.Start()
+	return StartMCPServerWithType(workdir, IndexerCtags)
+}
 
-	server := app.NewMCPIndexServerStandalone(indexer)
+// StartMCPServerWithType starts an MCP server with the specified indexer type.
+func StartMCPServerWithType(workdir string, indexerType IndexerType) (*MCPServer, error) {
+	var indexer app.Indexer
+	var tsIndexer *app.TreeSitterIndexer
+	var server *app.MCPIndexServer
+
+	switch indexerType {
+	case IndexerTreeSitter:
+		tsIndexer = app.NewTreeSitterIndexer(workdir)
+		tsIndexer.Start()
+		indexer = tsIndexer
+		server = app.NewMCPIndexServerStandaloneTS(tsIndexer)
+	default:
+		ctagsIndexer := app.NewSessionIndexer(workdir)
+		ctagsIndexer.Start()
+		indexer = ctagsIndexer
+		server = app.NewMCPIndexServerStandalone(ctagsIndexer)
+	}
+
 	port, err := server.Start()
 	if err != nil {
 		indexer.Stop()
@@ -27,9 +55,11 @@ func StartMCPServer(workdir string) (*MCPServer, error) {
 	}
 
 	return &MCPServer{
-		indexer: indexer,
-		server:  server,
-		port:    port,
+		indexer:     indexer,
+		tsIndexer:   tsIndexer,
+		server:      server,
+		port:        port,
+		indexerType: indexerType,
 	}, nil
 }
 
@@ -51,6 +81,11 @@ func (m *MCPServer) Config() string {
 // Port returns the server port.
 func (m *MCPServer) Port() int {
 	return m.port
+}
+
+// Type returns the indexer type being used.
+func (m *MCPServer) Type() IndexerType {
+	return m.indexerType
 }
 
 // WaitForIndex waits until the indexer has symbols available.

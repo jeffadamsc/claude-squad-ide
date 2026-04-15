@@ -16,24 +16,6 @@ import (
 	"claude-squad/log"
 )
 
-// Symbol represents an indexed symbol with extended metadata.
-type Symbol struct {
-	Name     string `json:"name"`
-	File     string `json:"path"`
-	Line     int    `json:"line"`
-	Kind     string `json:"kind"`
-	Language string `json:"language"`
-	Scope    string `json:"scope"`
-}
-
-// Reference represents a usage/reference to a symbol.
-type Reference struct {
-	Symbol Symbol
-	File   string
-	Line   int
-	Column int
-}
-
 // Definition represents a symbol definition from ctags.
 type Definition struct {
 	Name     string `json:"name"`
@@ -42,6 +24,65 @@ type Definition struct {
 	Kind     string `json:"kind"`
 	Language string `json:"language"`
 	Scope    string `json:"scope"`
+}
+
+// Symbol is the tree-sitter-based symbol with extended fields.
+// Replaces Definition for the new indexer.
+type Symbol struct {
+	Name       string `json:"name"`
+	Kind       string `json:"kind"`       // function, type, variable, method, class
+	File       string `json:"file"`
+	Line       int    `json:"line"`
+	EndLine    int    `json:"end_line"`   // for extracting full body
+	Column     int    `json:"column"`
+	StartByte  uint32 `json:"start_byte"` // byte offset for precise retrieval
+	EndByte    uint32 `json:"end_byte"`   // byte offset for precise retrieval
+	Language   string `json:"language"`
+	Scope      string `json:"scope"`      // parent class/module
+	Signature  string `json:"signature"`  // function signature
+	DocComment string `json:"doc,omitempty"`
+}
+
+// Reference represents a call or usage of a symbol.
+type Reference struct {
+	Symbol string `json:"symbol"`  // what's being called
+	File   string `json:"file"`    // where the call is
+	Line   int    `json:"line"`
+	Column int    `json:"column"`
+	Caller string `json:"caller"`  // function containing the call
+	Kind   string `json:"kind"`    // call, import, type_ref
+}
+
+// Indexer is the interface for symbol indexers (ctags or tree-sitter).
+type Indexer interface {
+	Start()
+	Stop()
+	Refresh()
+	Worktree() string
+	Files() []string
+	Lookup(name string) []Definition
+	AllSymbols() map[string][]Definition
+}
+
+// IndexerType determines which indexer to use.
+type IndexerType string
+
+const (
+	IndexerCtags      IndexerType = "ctags"
+	IndexerTreeSitter IndexerType = "treesitter"
+)
+
+// DefaultIndexer is the default indexer type for new sessions.
+var DefaultIndexer = IndexerTreeSitter
+
+// createIndexer creates an indexer of the given type for the worktree.
+func createIndexer(worktree string, indexerType IndexerType) Indexer {
+	switch indexerType {
+	case IndexerTreeSitter:
+		return NewTreeSitterIndexer(worktree)
+	default:
+		return NewSessionIndexer(worktree)
+	}
 }
 
 // ctagsEntry is the raw JSON structure from ctags --output-format=json.
