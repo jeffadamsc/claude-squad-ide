@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"path/filepath"
+	"runtime/debug"
 
 	appPkg "claude-squad/app"
 	"claude-squad/config"
@@ -35,6 +36,11 @@ var (
 		RunE: func(cmd *cobra.Command, args []string) error {
 			log.Initialize(daemonFlag)
 			defer log.Close()
+
+			// Limit Go's memory usage to encourage more aggressive GC and
+			// faster return of memory to the OS. Without this, Go tends to
+			// hold onto allocated memory indefinitely.
+			debug.SetMemoryLimit(512 * 1024 * 1024) // 512 MiB
 
 			if daemonFlag {
 				cfg := config.LoadConfig()

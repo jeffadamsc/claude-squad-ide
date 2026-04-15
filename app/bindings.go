@@ -465,6 +465,14 @@ func (api *SessionAPI) PauseSession(id string) error {
 		return fmt.Errorf("session %s not found", id)
 	}
 
+	// Stop the indexer when pausing to free memory.
+	// The indexer will be restarted when the session resumes and
+	// the user enters scope mode again.
+	if idx, ok := api.indexers[id]; ok {
+		idx.Stop()
+		delete(api.indexers, id)
+	}
+
 	if err := inst.Pause(); err != nil {
 		return fmt.Errorf("pause session: %w", err)
 	}
@@ -1207,6 +1215,7 @@ func (api *SessionAPI) listFilesRemote(inst *session.Instance) ([]string, error)
 }
 
 // IndexSession starts or restarts the indexer for a scoped session.
+// Only starts the indexer if the session is actively running (not paused).
 func (api *SessionAPI) IndexSession(sessionID string) error {
 	api.mu.Lock()
 	defer api.mu.Unlock()
@@ -1214,12 +1223,20 @@ func (api *SessionAPI) IndexSession(sessionID string) error {
 	// Stop existing indexer if any
 	if idx, ok := api.indexers[sessionID]; ok {
 		idx.Stop()
+		delete(api.indexers, sessionID)
 	}
 
 	inst, ok := api.instances[sessionID]
 	if !ok {
 		log.ErrorLog.Printf("IndexSession(%s): session not found", sessionID)
 		return fmt.Errorf("session not found: %s", sessionID)
+	}
+
+	// Don't start indexer for paused sessions - saves memory.
+	// The frontend will call IndexSession again when the session resumes.
+	if inst.Paused() {
+		log.InfoLog.Printf("IndexSession(%s): session is paused, skipping", sessionID)
+		return nil
 	}
 
 	// Remote sessions: not yet supported for indexing

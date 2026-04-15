@@ -71,6 +71,7 @@ export namespace app {
 	    inPlace: boolean;
 	    prompt: string;
 	    hostId: string;
+	    mcpEnabled?: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new CreateOptions(source);
@@ -86,6 +87,7 @@ export namespace app {
 	        this.inPlace = source["inPlace"];
 	        this.prompt = source["prompt"];
 	        this.hostId = source["hostId"];
+	        this.mcpEnabled = source["mcpEnabled"];
 	    }
 	}
 	export class Definition {

@@ -8,3 +8,4 @@ cs
 build/*
 !build/appicon.png
 !build/darwin/
+bin/
