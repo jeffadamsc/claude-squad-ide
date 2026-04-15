@@ -692,24 +692,33 @@ func (api *SessionAPI) GetConfig() (*AppConfig, error) {
 }
 
 func (api *SessionAPI) Close() {
+	log.InfoLog.Printf("Close: starting shutdown")
 	api.mu.Lock()
 	defer api.mu.Unlock()
 
-	for _, idx := range api.indexers {
+	log.InfoLog.Printf("Close: stopping %d indexers", len(api.indexers))
+	for id, idx := range api.indexers {
+		log.InfoLog.Printf("Close: stopping indexer %s", id)
 		idx.Stop()
+		log.InfoLog.Printf("Close: stopped indexer %s", id)
 	}
 
 	// Stop MCP server
+	log.InfoLog.Printf("Close: stopping MCP server")
 	if api.mcpServer != nil {
 		api.mcpServer.Stop()
 	}
 
 	// Only save state if we actually modified something
+	log.InfoLog.Printf("Close: saving instances")
 	api.saveInstancesLocked()
+	log.InfoLog.Printf("Close: closing ptyManager")
 	api.ptyManager.Close()
+	log.InfoLog.Printf("Close: closing hostManager")
 	if api.hostManager != nil {
 		api.hostManager.Close()
 	}
+	log.InfoLog.Printf("Close: shutdown complete")
 }
 
 // --- Host API Methods ---

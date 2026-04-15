@@ -256,11 +256,17 @@ func (idx *SessionIndexer) Start() {
 }
 
 // Stop halts the indexer, killing any in-progress external commands immediately.
+// Uses a timeout to avoid blocking app shutdown.
 func (idx *SessionIndexer) Stop() {
 	if idx.cancel != nil {
 		idx.cancel()
 	}
-	<-idx.done
+	// Wait for loop to exit with a timeout - don't block shutdown forever
+	select {
+	case <-idx.done:
+	case <-time.After(2 * time.Second):
+		logInfo("ctags: Stop timed out waiting for indexer loop")
+	}
 }
 
 // Refresh triggers an immediate re-index. Non-blocking.

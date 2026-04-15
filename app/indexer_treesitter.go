@@ -69,15 +69,24 @@ func (idx *TreeSitterIndexer) Start() {
 	idx.Refresh()
 }
 
-// Stop halts the indexer.
+// Stop halts the indexer with a timeout to avoid blocking app shutdown.
 func (idx *TreeSitterIndexer) Stop() {
+	logInfo("treesitter Stop: cancelling context")
 	if idx.cancel != nil {
 		idx.cancel()
 	}
-	<-idx.done
-	if idx.search != nil {
-		idx.search.Close()
+	// Wait for loop to exit with a timeout - don't block shutdown forever
+	logInfo("treesitter Stop: waiting for loop to exit (2s timeout)")
+	select {
+	case <-idx.done:
+		logInfo("treesitter Stop: loop exited cleanly")
+	case <-time.After(2 * time.Second):
+		logInfo("treesitter Stop: timed out waiting for indexer loop")
 	}
+	// Skip closing the bleve search index - it's in-memory only and will be freed
+	// when the process exits. Bleve's Close() does expensive cleanup that can
+	// block shutdown for minutes on large indexes.
+	logInfo("treesitter Stop: done (skipping search index close)")
 }
 
 // Refresh triggers an immediate re-index.
@@ -232,7 +241,11 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 	currentFiles := make(map[string]bool)
 	var existingFiles []string
 
-	for _, file := range files {
+	for i, file := range files {
+		// Check context every 100 files to avoid blocking shutdown
+		if i%100 == 0 && ctx.Err() != nil {
+			return
+		}
 		fullPath := filepath.Join(idx.worktree, file)
 		info, err := os.Stat(fullPath)
 		if err != nil {
@@ -319,7 +332,13 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 
 	// For call graph, we need all refs - re-extract from unchanged files too
 	// (This is a trade-off: storing refs would use more memory)
+	fileCount := 0
 	for file := range newFileSymbols {
+		// Check context periodically to allow cancellation
+		fileCount++
+		if fileCount%50 == 0 && ctx.Err() != nil {
+			return
+		}
 		if !contains(changedFiles, file) {
 			// Re-extract refs from unchanged file
 			fullPath := filepath.Join(idx.worktree, file)
@@ -355,6 +374,11 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 	idx.search.Clear()
 	idx.search.IndexBatch(allSyms)
 
+	// Check context before expensive state update and save
+	if ctx.Err() != nil {
+		return
+	}
+
 	// Step 4: Update state
 	idx.mu.Lock()
 	idx.files = files
@@ -364,6 +388,10 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 	idx.callgraph = callgraph
 	idx.mu.Unlock()
 
+	// Skip persistence if shutting down - not worth blocking for
+	if ctx.Err() != nil {
+		return
+	}
 	commit := getHeadCommit(idx.worktree)
 	if err := idx.store.Save(symbols, callgraph, commit); err != nil {
 		logError("treesitter: failed to persist index: %v", err)
