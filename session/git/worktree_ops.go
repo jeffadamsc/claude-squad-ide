@@ -128,8 +128,8 @@ func (g *GitWorktree) setupFromRef() error {
 	return g.initAndFetchSubmodules()
 }
 
-// initAndFetchSubmodules initializes submodules in the worktree using each
-// submodule's remote default branch. Skips silently if the repo has no submodules.
+// initAndFetchSubmodules initializes submodules in the worktree and checks out
+// origin/main (or origin/master) for each. Skips silently if the repo has no submodules.
 // Failures are logged but non-fatal — broken/empty submodules shouldn't block sessions.
 func (g *GitWorktree) initAndFetchSubmodules() error {
 	// Check if .gitmodules exists in the worktree
@@ -144,12 +144,38 @@ func (g *GitWorktree) initAndFetchSubmodules() error {
 		}
 	}
 
-	// Initialize submodules using their remote default branch (--remote), not the
-	// SHA recorded in the parent repo. This avoids failures when recorded commits
-	// no longer exist (force-push, etc.) and ensures submodules match origin/main.
-	// Failures are non-fatal since empty repos or missing refs shouldn't block work.
-	if _, err := g.runGitCommand(g.worktreePath, "submodule", "update", "--init", "--recursive", "--remote"); err != nil {
+	// Step 1: Initialize submodules with the recorded SHA first (this creates the directories)
+	if _, err := g.runGitCommand(g.worktreePath, "submodule", "update", "--init", "--recursive"); err != nil {
 		log.WarningLog.Printf("submodule init had errors (continuing anyway): %v", err)
+	}
+
+	// Step 2: For each submodule, fetch and checkout origin/main (or origin/master)
+	// This ensures submodules are on the latest remote main branch, not stale recorded SHAs.
+	output, err := g.runGitCommand(g.worktreePath, "submodule", "foreach", "--quiet", "--recursive", "echo $sm_path")
+	if err != nil {
+		return nil // no submodules or error listing them
+	}
+
+	submodules := strings.Split(strings.TrimSpace(output), "\n")
+	for _, sm := range submodules {
+		sm = strings.TrimSpace(sm)
+		if sm == "" {
+			continue
+		}
+		smPath := filepath.Join(g.worktreePath, sm)
+
+		// Fetch latest from origin
+		if _, err := g.runGitCommand(smPath, "fetch", "origin"); err != nil {
+			log.WarningLog.Printf("submodule %s: fetch failed: %v", sm, err)
+			continue
+		}
+
+		// Try origin/main first, fall back to origin/master
+		if _, err := g.runGitCommand(smPath, "checkout", "origin/main"); err != nil {
+			if _, err := g.runGitCommand(smPath, "checkout", "origin/master"); err != nil {
+				log.WarningLog.Printf("submodule %s: checkout origin/main or origin/master failed: %v", sm, err)
+			}
+		}
 	}
 
 	return nil
