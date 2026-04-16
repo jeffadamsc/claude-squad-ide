@@ -614,6 +614,17 @@ func (api *SessionAPI) PollAllStatuses() ([]SessionStatus, error) {
 	for _, inst := range api.instances {
 		hasPrompt := inst.HasPrompt()
 
+		// Check for auto-pause candidates before updating idle state.
+		// IdleSince is only set via MarkIdle (when hasPrompt is true), so a
+		// non-zero IdleSince already implies the session was idle at a prompt.
+		if api.idleTimeout > 0 &&
+			!inst.IdleSince.IsZero() &&
+			time.Since(inst.IdleSince) > api.idleTimeout &&
+			time.Since(inst.LastViewed) > api.idleTimeout &&
+			inst.Status != session.Paused {
+			toAutoPause = append(toAutoPause, inst.Title)
+		}
+
 		// Track idle state: a session is idle when it is waiting at a prompt.
 		if inst.Status != session.Paused {
 			if hasPrompt {
@@ -621,18 +632,6 @@ func (api *SessionAPI) PollAllStatuses() ([]SessionStatus, error) {
 			} else {
 				inst.MarkActive()
 			}
-		}
-
-		// Check for auto-pause candidates: session must be idle (prompt visible)
-		// and not recently viewed. We check hasPrompt so that sessions actively
-		// running (no prompt) are not auto-paused.
-		if api.idleTimeout > 0 &&
-			hasPrompt &&
-			!inst.IdleSince.IsZero() &&
-			time.Since(inst.IdleSince) > api.idleTimeout &&
-			time.Since(inst.LastViewed) > api.idleTimeout &&
-			inst.Status != session.Paused {
-			toAutoPause = append(toAutoPause, inst.Title)
 		}
 
 		// Check if Claude Code's active session has changed (e.g. /resume, /clear).
