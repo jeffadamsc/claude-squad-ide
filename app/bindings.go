@@ -57,6 +57,7 @@ type SessionStatus struct {
 	DiffStats    DiffStats `json:"diffStats"`
 	HasPrompt    bool      `json:"hasPrompt"`
 	SSHConnected *bool     `json:"sshConnected"`
+	AutoPaused   bool      `json:"autoPaused"`
 }
 
 type DiffStats struct {
@@ -150,6 +151,18 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 			}
 			api.instances[inst.Title] = inst
 			log.InfoLog.Printf("restored session: %s (branch: %s)", inst.Title, inst.Branch)
+		}
+	}
+
+	// Clean up orphaned processes from previous sessions.
+	// After a crash or forced quit, child processes (dev servers, watchers)
+	// may survive. Kill any that reference worktree paths of paused sessions.
+	for _, inst := range api.instances {
+		if inst.Status == session.Paused {
+			worktree := inst.GetWorktreePath()
+			if worktree != "" {
+				session.KillWorktreeProcesses(worktree)
+			}
 		}
 	}
 
@@ -355,6 +368,8 @@ func (api *SessionAPI) OpenSession(id string) (string, error) {
 		log.ErrorLog.Printf("OpenSession: session %q not found (have %d instances)", id, len(api.instances))
 		return "", fmt.Errorf("session %s not found", id)
 	}
+
+	inst.TouchLastViewed()
 
 	// Reconnect remote sessions if needed
 	if inst.HostID != "" {
@@ -594,9 +609,31 @@ func (api *SessionAPI) PollAllStatuses() ([]SessionStatus, error) {
 	api.mu.RLock()
 
 	needsSave := false
+	var toAutoPause []string
 	result := make([]SessionStatus, 0, len(api.instances))
 	for _, inst := range api.instances {
 		hasPrompt := inst.HasPrompt()
+
+		// Track idle state: a session is idle when it is waiting at a prompt.
+		if inst.Status != session.Paused {
+			if hasPrompt {
+				inst.MarkIdle()
+			} else {
+				inst.MarkActive()
+			}
+		}
+
+		// Check for auto-pause candidates: session must be idle (prompt visible)
+		// and not recently viewed. We check hasPrompt so that sessions actively
+		// running (no prompt) are not auto-paused.
+		if api.idleTimeout > 0 &&
+			hasPrompt &&
+			!inst.IdleSince.IsZero() &&
+			time.Since(inst.IdleSince) > api.idleTimeout &&
+			time.Since(inst.LastViewed) > api.idleTimeout &&
+			inst.Status != session.Paused {
+			toAutoPause = append(toAutoPause, inst.Title)
+		}
 
 		// Check if Claude Code's active session has changed (e.g. /resume, /clear).
 		if inst.SyncClaudeSessionID() {
@@ -621,9 +658,38 @@ func (api *SessionAPI) PollAllStatuses() ([]SessionStatus, error) {
 			DiffStats:    ds,
 			HasPrompt:    hasPrompt,
 			SSHConnected: sshConnected,
+			AutoPaused:   inst.AutoPaused,
 		})
 	}
 	api.mu.RUnlock()
+
+	// Auto-pause idle sessions (needs write lock, so done outside RLock)
+	for _, id := range toAutoPause {
+		api.mu.Lock()
+		if inst, ok := api.instances[id]; ok {
+			inst.AutoPaused = true
+		}
+		api.mu.Unlock()
+
+		log.InfoLog.Printf("auto-pausing idle session %q", id)
+		if err := api.PauseSession(id); err != nil {
+			log.ErrorLog.Printf("auto-pause %q failed: %v", id, err)
+		}
+	}
+
+	// Update result statuses for auto-paused sessions
+	if len(toAutoPause) > 0 {
+		paused := make(map[string]bool)
+		for _, id := range toAutoPause {
+			paused[id] = true
+		}
+		for i := range result {
+			if paused[result[i].ID] {
+				result[i].Status = "paused"
+				result[i].AutoPaused = true
+			}
+		}
+	}
 
 	if needsSave {
 		api.mu.Lock()

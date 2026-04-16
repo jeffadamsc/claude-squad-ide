@@ -503,6 +503,12 @@ func (i *Instance) Kill() error {
 		i.processID = ""
 	}
 
+	// Kill orphaned child processes (dev servers, watchers) that reference
+	// this worktree before removing the directory.
+	if i.gitWorktree != nil {
+		KillWorktreeProcesses(i.gitWorktree.GetWorktreePath())
+	}
+
 	// Then clean up git worktree
 	if i.gitWorktree != nil {
 		if err := i.gitWorktree.Cleanup(); err != nil {
@@ -698,6 +704,12 @@ func (i *Instance) Pause() error {
 			// Continue with pause process even if kill fails
 		}
 		i.processID = ""
+	}
+
+	// Kill orphaned child processes (dev servers, watchers) that reference
+	// this worktree before removing the directory.
+	if i.gitWorktree != nil {
+		KillWorktreeProcesses(i.gitWorktree.GetWorktreePath())
 	}
 
 	// Check if worktree exists before trying to remove it
