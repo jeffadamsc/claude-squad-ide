@@ -70,6 +70,16 @@ type Instance struct {
 	// If set, it will be passed via --mcp-config when spawning the process.
 	MCPConfig string
 
+	// IdleSince tracks when the session became idle (prompt visible, waiting for input).
+	// Zero value means the session is not idle.
+	IdleSince time.Time
+	// LastViewed tracks when the session was last opened in the UI.
+	// Used to prevent auto-pausing sessions the user is actively viewing.
+	LastViewed time.Time
+	// AutoPaused is true when the session was auto-paused due to idle timeout
+	// (as opposed to manually paused by the user).
+	AutoPaused bool
+
 	// gitExecutor is the command executor for git operations (local or remote SSH).
 	gitExecutor git.CommandExecutor
 	// DiffStats stores the current git diff statistics
@@ -251,6 +261,24 @@ func (i *Instance) RepoName() (string, error) {
 
 func (i *Instance) SetStatus(status Status) {
 	i.Status = status
+}
+
+// MarkIdle records the current time as when the session became idle.
+// Does nothing if already marked idle (preserves the original timestamp).
+func (i *Instance) MarkIdle() {
+	if i.IdleSince.IsZero() {
+		i.IdleSince = time.Now()
+	}
+}
+
+// MarkActive clears the idle timestamp, indicating the session is working.
+func (i *Instance) MarkActive() {
+	i.IdleSince = time.Time{}
+}
+
+// TouchLastViewed updates the last-viewed timestamp to now.
+func (i *Instance) TouchLastViewed() {
+	i.LastViewed = time.Now()
 }
 
 // SetSelectedBranch sets the branch to use when starting the instance.

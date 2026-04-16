@@ -87,3 +87,50 @@ func TestInPlaceResumeDoesNotPanic(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }
+
+func TestIdleTracking(t *testing.T) {
+	inst := &Instance{
+		started: true,
+		inPlace: true,
+	}
+
+	// Initially not idle
+	if !inst.IdleSince.IsZero() {
+		t.Error("expected IdleSince to be zero initially")
+	}
+
+	// Mark idle
+	inst.MarkIdle()
+	if inst.IdleSince.IsZero() {
+		t.Error("expected IdleSince to be set after MarkIdle")
+	}
+
+	// MarkIdle again should not change the timestamp
+	first := inst.IdleSince
+	inst.MarkIdle()
+	if inst.IdleSince != first {
+		t.Error("MarkIdle should not update already-set IdleSince")
+	}
+
+	// MarkActive clears it
+	inst.MarkActive()
+	if !inst.IdleSince.IsZero() {
+		t.Error("expected IdleSince to be zero after MarkActive")
+	}
+
+	// AutoPaused flag
+	if inst.AutoPaused {
+		t.Error("expected AutoPaused to be false initially")
+	}
+}
+
+func TestLastViewed(t *testing.T) {
+	inst := &Instance{}
+	if !inst.LastViewed.IsZero() {
+		t.Error("expected LastViewed to be zero initially")
+	}
+	inst.TouchLastViewed()
+	if inst.LastViewed.IsZero() {
+		t.Error("expected LastViewed to be set after TouchLastViewed")
+	}
+}
