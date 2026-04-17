@@ -89,7 +89,7 @@ func Goodbye() string {
 
 	idx := NewTreeSitterIndexer(tmp)
 	idx.Start()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Look up Hello function
 	syms := idx.LookupSymbol("Hello")
@@ -177,7 +177,7 @@ func UnrelatedFunc() string {
 
 	idx := NewTreeSitterIndexer(tmp)
 	idx.Start()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Search for "Process" functions with a small budget
 	results := idx.SearchWithBudget("Process", 50, true)
@@ -254,7 +254,7 @@ func Helper() string {
 
 	idx := NewTreeSitterIndexer(tmp)
 	idx.Start()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Get blast radius for Helper
 	br := idx.GetBlastRadius("Helper")
@@ -332,7 +332,7 @@ func Helper() string {
 
 	idx := NewTreeSitterIndexer(tmp)
 	idx.Start()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Get PageRank scores
 	pr := idx.GetPageRank()
@@ -403,7 +403,7 @@ func Unrelated() string {
 
 	idx := NewTreeSitterIndexer(tmp)
 	idx.Start()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Search for ProcessData with context
 	bundles := idx.SearchWithContext("ProcessData", 500)
@@ -472,7 +472,7 @@ func Goodbye() string {
 
 	idx := NewTreeSitterIndexer(tmp)
 	idx.Start()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Verify initial index
 	syms := idx.LookupSymbol("Hello")
@@ -500,7 +500,7 @@ func NewFunc() string {
 
 	// Trigger refresh
 	idx.Refresh()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Verify Hello is still there
 	syms = idx.LookupSymbol("Hello")
@@ -523,7 +523,7 @@ func NewFunc() string {
 	// Delete file2
 	os.Remove(filepath.Join(tmp, "file2.go"))
 	idx.Refresh()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Goodbye should be gone
 	syms = idx.LookupSymbol("Goodbye")
@@ -575,7 +575,7 @@ func anotherUnused() string {
 
 	idx := NewTreeSitterIndexer(tmp)
 	idx.Start()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Find dead code
 	deadCode := idx.FindDeadCode()
@@ -643,7 +643,7 @@ func Unused() string {
 
 	idx := NewTreeSitterIndexer(tmp)
 	idx.Start()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Helper should have highest in-degree (called from Main and ProcessData)
 	helperCentrality := idx.GetCentrality("Helper")

@@ -5,7 +5,7 @@ import (
 )
 
 func TestSymbolSearchRanking(t *testing.T) {
-	idx := NewSymbolIndex()
+	idx := NewSymbolIndexOnDisk(t.TempDir())
 	defer idx.Close()
 
 	// Add symbols with varying relevance

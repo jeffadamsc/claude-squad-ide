@@ -47,6 +47,9 @@ func (idx *TreeSitterIndexer) GetChangedSymbols(fromCommit, toCommit string) ([]
 		return nil, err
 	}
 
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 

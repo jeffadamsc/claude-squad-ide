@@ -78,7 +78,7 @@ func Goodbye() string {
 	// Start indexer and let it build
 	idx := NewTreeSitterIndexer(tmp)
 	idx.Start()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Modify the Hello function
 	modifiedCode := `package main
@@ -95,7 +95,7 @@ func Goodbye() string {
 
 	// Refresh index to pick up new line positions
 	idx.Refresh()
-	time.Sleep(200 * time.Millisecond)
+	time.Sleep(500 * time.Millisecond)
 
 	// Get changed symbols (HEAD vs working dir)
 	changed, err := idx.GetChangedSymbols("HEAD", "")

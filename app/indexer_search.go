@@ -1,6 +1,8 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/blevesearch/bleve/v2"
@@ -10,16 +12,23 @@ import (
 // SymbolIndex provides BM25-ranked search over symbols.
 type SymbolIndex struct {
 	index bleve.Index
+	path  string // on-disk path (empty = in-memory)
 }
 
-// NewSymbolIndex creates an in-memory bleve index.
-func NewSymbolIndex() *SymbolIndex {
+// NewSymbolIndexOnDisk creates a disk-backed bleve index at the given path.
+// Falls back to in-memory if disk creation fails.
+func NewSymbolIndexOnDisk(dir string) *SymbolIndex {
+	path := filepath.Join(dir, ".claude-squad", "index", "bleve.index")
+	// Remove stale index from a previous run
+	os.RemoveAll(path)
 	m := buildIndexMapping()
-	index, err := bleve.NewMemOnly(m)
+	index, err := bleve.New(path, m)
 	if err != nil {
-		panic(err) // should not happen with memory index
+		// Fallback to in-memory
+		index, _ = bleve.NewMemOnly(m)
+		return &SymbolIndex{index: index}
 	}
-	return &SymbolIndex{index: index}
+	return &SymbolIndex{index: index, path: path}
 }
 
 func buildIndexMapping() mapping.IndexMapping {
@@ -127,16 +136,31 @@ func (si *SymbolIndex) Search(query string, limit int) []Symbol {
 func (si *SymbolIndex) Clear() error {
 	si.index.Close()
 	m := buildIndexMapping()
-	index, err := bleve.NewMemOnly(m)
-	if err != nil {
-		return err
+	if si.path != "" {
+		os.RemoveAll(si.path)
+		index, err := bleve.New(si.path, m)
+		if err != nil {
+			// Fallback to in-memory
+			index, _ = bleve.NewMemOnly(m)
+			si.path = ""
+		}
+		si.index = index
+	} else {
+		index, err := bleve.NewMemOnly(m)
+		if err != nil {
+			return err
+		}
+		si.index = index
 	}
-	si.index = index
 	return nil
 }
 
 func (si *SymbolIndex) Close() error {
-	return si.index.Close()
+	err := si.index.Close()
+	if si.path != "" {
+		os.RemoveAll(si.path)
+	}
+	return err
 }
 
 func getString(fields map[string]interface{}, key string) string {

@@ -15,6 +15,10 @@ import (
 // TreeSitterIndexer provides tree-sitter based symbol indexing.
 // Implements the Indexer interface with additional methods for
 // call graph analysis and BM25 search.
+//
+// Memory management: symbols and callgraph are loaded on-demand from
+// persisted .gob files and nilled out after build to minimize resident
+// memory. The bleve search index is disk-backed.
 type TreeSitterIndexer struct {
 	worktree string
 
@@ -26,6 +30,7 @@ type TreeSitterIndexer struct {
 	callgraph    *CallGraph
 	search       *SymbolIndex
 	store        *IndexStore
+	indexed      bool // true once first build has completed and data is on disk
 
 	cancel  context.CancelFunc
 	done    chan struct{}
@@ -36,10 +41,8 @@ type TreeSitterIndexer struct {
 func NewTreeSitterIndexer(worktree string) *TreeSitterIndexer {
 	return &TreeSitterIndexer{
 		worktree:     worktree,
-		symbols:      make(map[string][]Symbol),
-		fileSymbols:  make(map[string][]Symbol),
 		fileModTimes: make(map[string]time.Time),
-		search:       NewSymbolIndex(),
+		search:       NewSymbolIndexOnDisk(worktree),
 		store:        NewIndexStore(worktree),
 		done:         make(chan struct{}),
 		refresh:      make(chan struct{}, 1),
@@ -76,7 +79,6 @@ func (idx *TreeSitterIndexer) Stop() {
 	if idx.cancel != nil {
 		idx.cancel()
 	}
-	// Wait for loop to exit with a timeout - don't block shutdown forever
 	logInfo("treesitter Stop: waiting for loop to exit (2s timeout)")
 	select {
 	case <-idx.done:
@@ -84,10 +86,49 @@ func (idx *TreeSitterIndexer) Stop() {
 	case <-time.After(2 * time.Second):
 		logInfo("treesitter Stop: timed out waiting for indexer loop")
 	}
-	// Skip closing the bleve search index - it's in-memory only and will be freed
-	// when the process exits. Bleve's Close() does expensive cleanup that can
-	// block shutdown for minutes on large indexes.
-	logInfo("treesitter Stop: done (skipping search index close)")
+	// Close the disk-backed bleve index and remove its files.
+	if idx.search != nil {
+		idx.search.Close()
+	}
+	logInfo("treesitter Stop: done")
+}
+
+// ensureLoaded reloads symbols and callgraph from disk if they have been
+// released to save memory. Must be called with idx.mu held for writing,
+// or the caller must upgrade from RLock to Lock.
+func (idx *TreeSitterIndexer) ensureLoaded() {
+	if idx.symbols != nil {
+		return // already loaded
+	}
+	if !idx.indexed {
+		return // no data on disk yet
+	}
+	symbols, cg, _, err := idx.store.Load()
+	if err != nil || symbols == nil {
+		logError("treesitter ensureLoaded: failed to reload from disk: %v", err)
+		return
+	}
+	idx.symbols = symbols
+	idx.callgraph = cg
+	idx.fileSymbols = make(map[string][]Symbol)
+	for _, syms := range symbols {
+		for _, sym := range syms {
+			idx.fileSymbols[sym.File] = append(idx.fileSymbols[sym.File], sym)
+		}
+	}
+	logInfo("treesitter ensureLoaded: reloaded %d symbol groups from disk", len(symbols))
+}
+
+// releaseHeavyData nils out symbols, fileSymbols, and callgraph to free
+// memory. Data can be reloaded on demand via ensureLoaded().
+func (idx *TreeSitterIndexer) releaseHeavyData() {
+	idx.mu.Lock()
+	idx.symbols = nil
+	idx.fileSymbols = nil
+	idx.callgraph = nil
+	idx.mu.Unlock()
+	debug.FreeOSMemory()
+	logInfo("treesitter: released heavy data from memory")
 }
 
 // Refresh triggers an immediate re-index.
@@ -110,6 +151,9 @@ func (idx *TreeSitterIndexer) Files() []string {
 // Lookup returns definitions matching the given symbol name.
 // Returns Definition for Indexer interface compatibility.
 func (idx *TreeSitterIndexer) Lookup(name string) []Definition {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	syms := idx.symbols[name]
@@ -129,6 +173,9 @@ func (idx *TreeSitterIndexer) Lookup(name string) []Definition {
 
 // AllSymbols returns all symbols as Definition for interface compat.
 func (idx *TreeSitterIndexer) AllSymbols() map[string][]Definition {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	out := make(map[string][]Definition, len(idx.symbols))
@@ -151,6 +198,9 @@ func (idx *TreeSitterIndexer) AllSymbols() map[string][]Definition {
 
 // LookupSymbol returns full Symbol data (new API).
 func (idx *TreeSitterIndexer) LookupSymbol(name string) []Symbol {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	syms := idx.symbols[name]
@@ -174,44 +224,38 @@ func (idx *TreeSitterIndexer) loop(ctx context.Context) {
 func (idx *TreeSitterIndexer) build(ctx context.Context) {
 	// Try to load from disk first (only on initial build)
 	idx.mu.RLock()
-	hasSymbols := len(idx.symbols) > 0
+	alreadyIndexed := idx.indexed
 	idx.mu.RUnlock()
 
-	if !hasSymbols {
+	if !alreadyIndexed {
 		if symbols, cg, commit, err := idx.store.Load(); err == nil && symbols != nil {
 			currentCommit := getHeadCommit(idx.worktree)
 			if commit == currentCommit {
-				idx.mu.Lock()
-				idx.symbols = symbols
-				idx.callgraph = cg
-				// Rebuild fileSymbols from loaded symbols
-				idx.fileSymbols = make(map[string][]Symbol)
-				for _, syms := range symbols {
-					for _, sym := range syms {
-						idx.fileSymbols[sym.File] = append(idx.fileSymbols[sym.File], sym)
-					}
-				}
-				idx.mu.Unlock()
-
+				// Index into bleve (on disk), then release the in-memory data
 				var allSyms []Symbol
 				for _, syms := range symbols {
 					allSyms = append(allSyms, syms...)
 				}
 				idx.search.IndexBatch(allSyms)
 
-				logInfo("treesitter: loaded %d symbols from cache", len(allSyms))
+				logInfo("treesitter: loaded %d symbols from cache (bleve on disk)", len(allSyms))
 
 				files, _ := listFilesInWorktreeCtx(ctx, idx.worktree)
 				idx.mu.Lock()
 				idx.files = files
-				// Initialize mod times for loaded files
+				idx.indexed = true
+				// Keep fileModTimes for incremental rebuild detection
 				for _, f := range files {
 					fullPath := filepath.Join(idx.worktree, f)
 					if info, err := os.Stat(fullPath); err == nil {
 						idx.fileModTimes[f] = info.ModTime()
 					}
 				}
+				// Don't keep symbols/callgraph in memory - they're on disk
+				_ = symbols
+				_ = cg
 				idx.mu.Unlock()
+				debug.FreeOSMemory()
 				return
 			}
 		}
@@ -234,6 +278,15 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 	idx.mu.RLock()
 	oldModTimes := idx.fileModTimes
 	oldFileSymbols := idx.fileSymbols
+	// If fileSymbols was released to save memory, reload for incremental rebuild
+	if oldFileSymbols == nil && alreadyIndexed {
+		idx.mu.RUnlock()
+		idx.mu.Lock()
+		idx.ensureLoaded()
+		oldFileSymbols = idx.fileSymbols
+		idx.mu.Unlock()
+		idx.mu.RLock()
+	}
 	idx.mu.RUnlock()
 
 	var changedFiles []string
@@ -273,7 +326,7 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 	}
 
 	// If nothing changed and we have existing data, skip rebuild
-	if len(changedFiles) == 0 && len(deletedFiles) == 0 && hasSymbols {
+	if len(changedFiles) == 0 && len(deletedFiles) == 0 && alreadyIndexed {
 		idx.mu.Lock()
 		idx.files = files
 		idx.mu.Unlock()
@@ -380,16 +433,8 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 		return
 	}
 
-	// Step 4: Update state
-	idx.mu.Lock()
-	idx.files = files
-	idx.symbols = symbols
-	idx.fileSymbols = newFileSymbols
-	idx.fileModTimes = newModTimes
-	idx.callgraph = callgraph
-	idx.mu.Unlock()
-
-	// Skip persistence if shutting down - not worth blocking for
+	// Step 4: Persist to disk, then release heavy data from memory.
+	// Skip persistence if shutting down
 	if ctx.Err() != nil {
 		return
 	}
@@ -398,9 +443,17 @@ func (idx *TreeSitterIndexer) build(ctx context.Context) {
 		logError("treesitter: failed to persist index: %v", err)
 	}
 
+	// Update state — keep only fileModTimes and files in memory.
+	idx.mu.Lock()
+	idx.files = files
+	idx.fileModTimes = newModTimes
+	idx.symbols = nil
+	idx.fileSymbols = nil
+	idx.callgraph = nil
+	idx.indexed = true
+	idx.mu.Unlock()
+
 	// Force Go to return freed heap pages to the OS immediately.
-	// Without this, Go holds freed pages indefinitely and macOS
-	// swaps them rather than reclaiming them.
 	debug.FreeOSMemory()
 }
 
@@ -486,6 +539,9 @@ func (idx *TreeSitterIndexer) SearchWithBudget(query string, maxTokens int, incl
 
 // FindCallers returns all places where symbol is called.
 func (idx *TreeSitterIndexer) FindCallers(symbol string) []Reference {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	if idx.callgraph == nil {
@@ -496,6 +552,9 @@ func (idx *TreeSitterIndexer) FindCallers(symbol string) []Reference {
 
 // FindCallees returns all symbols called by the given function.
 func (idx *TreeSitterIndexer) FindCallees(caller string) []Reference {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	if idx.callgraph == nil {
@@ -506,6 +565,9 @@ func (idx *TreeSitterIndexer) FindCallees(caller string) []Reference {
 
 // GetCentrality returns centrality metrics for a symbol.
 func (idx *TreeSitterIndexer) GetCentrality(symbol string) SymbolCentrality {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	if idx.callgraph == nil {
@@ -516,6 +578,9 @@ func (idx *TreeSitterIndexer) GetCentrality(symbol string) SymbolCentrality {
 
 // TopSymbolsByCentrality returns the most important symbols by centrality score.
 func (idx *TreeSitterIndexer) TopSymbolsByCentrality(limit int) []SymbolCentrality {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	if idx.callgraph == nil {
@@ -531,6 +596,9 @@ func (idx *TreeSitterIndexer) TopSymbolsByCentrality(limit int) []SymbolCentrali
 // GetBlastRadius returns the impact analysis for changing a symbol.
 // Shows what would break if the symbol is modified.
 func (idx *TreeSitterIndexer) GetBlastRadius(symbol string) BlastRadius {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	if idx.callgraph == nil {
@@ -541,6 +609,9 @@ func (idx *TreeSitterIndexer) GetBlastRadius(symbol string) BlastRadius {
 
 // GetPageRank returns PageRank scores for all symbols.
 func (idx *TreeSitterIndexer) GetPageRank() []PageRankResult {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	if idx.callgraph == nil {
@@ -551,6 +622,9 @@ func (idx *TreeSitterIndexer) GetPageRank() []PageRankResult {
 
 // FindDeadCode returns symbols that appear to be unused.
 func (idx *TreeSitterIndexer) FindDeadCode() []DeadCodeResult {
+	idx.mu.Lock()
+	idx.ensureLoaded()
+	idx.mu.Unlock()
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 	if idx.callgraph == nil {
