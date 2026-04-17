@@ -348,6 +348,7 @@ func (m *MCPIndexServer) handleCodeSearch(ctx context.Context, req mcp.CallToolR
 	}
 
 	query, err := req.RequireString("query")
+	log.InfoLog.Printf("MCP tool call: code_search(query=%q) session=%q", query, sessionID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
 	}
@@ -419,6 +420,7 @@ func (m *MCPIndexServer) handleGetSymbolSource(ctx context.Context, req mcp.Call
 	}
 
 	name, err := req.RequireString("name")
+	log.InfoLog.Printf("MCP tool call: get_symbol_source(name=%q) session=%q", name, sessionID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
 	}
@@ -466,6 +468,7 @@ func (m *MCPIndexServer) handleGetFileOutline(ctx context.Context, req mcp.CallT
 	}
 
 	path, err := req.RequireString("path")
+	log.InfoLog.Printf("MCP tool call: get_file_symbols(path=%q) session=%q", path, sessionID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
 	}
@@ -692,6 +695,7 @@ func (m *MCPIndexServer) handleFindCallers(ctx context.Context, req mcp.CallTool
 	}
 
 	symbol, err := req.RequireString("symbol")
+	log.InfoLog.Printf("MCP tool call: find_references(symbol=%q) session=%q", symbol, sessionID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
 	}
@@ -796,6 +800,7 @@ func (m *MCPIndexServer) handleSmartLookup(ctx context.Context, req mcp.CallTool
 	}
 
 	query, err := req.RequireString("query")
+	log.InfoLog.Printf("MCP tool call: smart_lookup(query=%q) session=%q", query, sessionID)
 	if err != nil {
 		return mcp.NewToolResultError(fmt.Sprintf("invalid argument: %v", err)), nil
 	}
