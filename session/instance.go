@@ -311,6 +311,15 @@ func (i *Instance) spawnProcess(dir string, resume bool) error {
 	if i.processManager == nil {
 		return fmt.Errorf("process manager not set")
 	}
+
+	// Kill orphaned child processes from a previous process in this worktree.
+	// When Claude CLI restarts (e.g. --continue on resume), the old process's
+	// children (dev servers, watchers, esbuild) become orphans. Clean them up
+	// before spawning the new process.
+	if i.gitWorktree != nil {
+		KillWorktreeProcesses(i.gitWorktree.GetWorktreePath())
+	}
+
 	fields := strings.Fields(i.Program)
 	if len(fields) == 0 {
 		return fmt.Errorf("program is empty")
