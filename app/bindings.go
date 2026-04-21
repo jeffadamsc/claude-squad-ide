@@ -89,6 +89,7 @@ type SessionAPI struct {
 	indexers      map[string]Indexer
 	mcpServer     *MCPIndexServer
 	idleTimeout   time.Duration
+	stopIdle      chan struct{} // signals the background idle checker to stop
 }
 
 func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
@@ -171,6 +172,16 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 	if _, err := api.mcpServer.Start(); err != nil {
 		log.ErrorLog.Printf("failed to start MCP server: %v", err)
 		// Non-fatal: sessions can still run without MCP
+	}
+
+	// Start background idle checker. PollAllStatuses is called by the
+	// frontend but macOS suspends the WebView when the app is in the
+	// background, so the frontend poll stops. This goroutine ensures
+	// idle sessions are detected and auto-paused even when the UI is
+	// not active.
+	if api.idleTimeout > 0 {
+		api.stopIdle = make(chan struct{})
+		go api.idleCheckerLoop()
 	}
 
 	return api, nil
@@ -764,6 +775,13 @@ func (api *SessionAPI) GetConfig() (*AppConfig, error) {
 
 func (api *SessionAPI) Close() {
 	log.InfoLog.Printf("Close: starting shutdown")
+
+	// Stop the background idle checker before acquiring the lock,
+	// since the checker also acquires it.
+	if api.stopIdle != nil {
+		close(api.stopIdle)
+	}
+
 	api.mu.Lock()
 	defer api.mu.Unlock()
 
@@ -790,6 +808,62 @@ func (api *SessionAPI) Close() {
 		api.hostManager.Close()
 	}
 	log.InfoLog.Printf("Close: shutdown complete")
+}
+
+// idleCheckerLoop runs in the background and auto-pauses sessions that have
+// been idle longer than the configured timeout. This is necessary because the
+// frontend's PollAllStatuses call stops when macOS suspends the WebView (App
+// Nap) overnight. The goroutine checks every 60 seconds.
+func (api *SessionAPI) idleCheckerLoop() {
+	ticker := time.NewTicker(60 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-api.stopIdle:
+			log.InfoLog.Printf("idleChecker: stopped")
+			return
+		case <-ticker.C:
+			api.checkIdleSessions()
+		}
+	}
+}
+
+// checkIdleSessions scans running sessions and auto-pauses any that have been
+// idle (showing prompt) longer than the idle timeout.
+func (api *SessionAPI) checkIdleSessions() {
+	api.mu.RLock()
+	var toAutoPause []string
+	for _, inst := range api.instances {
+		if inst.Status == session.Paused {
+			continue
+		}
+		hasPrompt := inst.HasPrompt()
+		if hasPrompt {
+			inst.MarkIdle()
+		} else {
+			inst.MarkActive()
+		}
+		if !inst.IdleSince.IsZero() &&
+			time.Since(inst.IdleSince) > api.idleTimeout &&
+			time.Since(inst.LastViewed) > api.idleTimeout {
+			toAutoPause = append(toAutoPause, inst.Title)
+		}
+	}
+	api.mu.RUnlock()
+
+	for _, id := range toAutoPause {
+		api.mu.Lock()
+		if inst, ok := api.instances[id]; ok {
+			inst.AutoPaused = true
+		}
+		api.mu.Unlock()
+
+		log.InfoLog.Printf("idleChecker: auto-pausing idle session %q", id)
+		if err := api.PauseSession(id); err != nil {
+			log.ErrorLog.Printf("idleChecker: auto-pause %q failed: %v", id, err)
+		}
+	}
 }
 
 // --- Host API Methods ---
