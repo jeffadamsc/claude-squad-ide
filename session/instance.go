@@ -352,6 +352,7 @@ func (i *Instance) spawnProcess(dir string, resume bool) error {
 
 	isClaude := strings.HasSuffix(program, ProgramClaude)
 
+	var spawnEnv []string
 	if isClaude {
 		args = append(args, "--allow-dangerously-skip-permissions")
 		if resume {
@@ -369,10 +370,15 @@ func (i *Instance) spawnProcess(dir string, resume bool) error {
 		// Inject MCP config if set (for claude-squad index server)
 		if i.MCPConfig != "" {
 			args = append(args, "--mcp-config", i.MCPConfig)
+			// Force eager tool-schema loading so cs-index tools (smart_lookup,
+			// code_search, etc.) are directly callable instead of deferred
+			// behind ToolSearch — otherwise the model tends to fall back to
+			// Grep/Read rather than pay the schema-loading cost.
+			spawnEnv = append(spawnEnv, "ENABLE_TOOL_SEARCH=false")
 		}
 	}
 
-	id, err := i.processManager.Spawn(program, args, pty.SpawnOptions{Dir: dir})
+	id, err := i.processManager.Spawn(program, args, pty.SpawnOptions{Dir: dir, Env: spawnEnv})
 	if err != nil {
 		return err
 	}

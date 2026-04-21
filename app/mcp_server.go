@@ -895,7 +895,12 @@ func readLinesFromFile(path string, start, end int) (string, error) {
 // These should be included in system prompts or CLAUDE.md.
 const ServerInstructions = `## Code Index (cs-index MCP Server)
 
-This codebase has a tree-sitter code index. Use it for 95% token savings.
+This codebase has a tree-sitter code index. Use it for 95% token savings on code navigation.
+
+**MANDATORY FIRST ACTION — do this before responding to ANY user message in this session:**
+If the cs-index tools (smart_lookup, code_search, get_symbol_source, find_references, get_file_symbols, get_call_graph) appear as *deferred tools*, your very first tool call in this session MUST be a single ToolSearch invocation with exactly:
+` + "`select:smart_lookup,code_search,get_symbol_source,find_references,get_file_symbols,get_call_graph`" + `
+This loads all six schemas in one shot. After that, call the tools directly like any other tool. This is non-negotiable — do NOT use Grep or Read on source code before this step is done, and do NOT skip it because the current task "seems simple" or "doesn't need code navigation." You cannot predict that; load the schemas up front so they are ready when you need them.
 
 **START HERE - smart_lookup is the best tool for understanding code:**
 - "Explain function X" → smart_lookup (returns X + everything X calls)
