@@ -2,6 +2,7 @@ import { useRef, useEffect, useState, useCallback } from "react";
 import { useTerminal } from "../../hooks/useTerminal";
 import { useSessionStore } from "../../store/sessionStore";
 import { OnFileDrop, OnFileDropOff } from "../../../wailsjs/runtime/runtime";
+import { api } from "../../lib/wails";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPaneProps {
@@ -10,6 +11,12 @@ interface TerminalPaneProps {
   focused?: boolean;
   instanceId?: string;
 }
+
+// Cadence at which TerminalPane pings the backend to mark the session as
+// "currently being viewed", so the auto-pauser doesn't kill it. The smallest
+// supported idleTimeout setting is 15 minutes, so 60s is plenty of margin
+// while staying well under any reasonable IPC noise threshold.
+const KEEPALIVE_INTERVAL_MS = 60_000;
 
 /**
  * Shell-escape a file path for safe pasting into a terminal.
@@ -22,9 +29,37 @@ function shellEscape(path: string): string {
 
 export function TerminalPane({ sessionId, wsPort, focused, instanceId }: TerminalPaneProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const { disconnected, wsRef, fitRef, termRef } = useTerminal(containerRef, { sessionId, wsPort });
+  const status = useSessionStore((s) => instanceId ? s.statuses.get(instanceId) : undefined);
+  const isPaused = status?.status === "paused";
+  const { disconnected, wsRef, fitRef, termRef } = useTerminal(containerRef, { sessionId, wsPort, paused: isPaused });
   const [dragOver, setDragOver] = useState(false);
+  const [resuming, setResuming] = useState(false);
   const zoomTerminalFont = useSessionStore((s) => s.zoomTerminalFont);
+  const openTab = useSessionStore((s) => s.openTab);
+
+  // Keepalive: while this pane is mounted and the tab is visible, periodically
+  // touch LastViewed on the backend so the auto-pauser doesn't kill the
+  // session out from under us. Skipped when paused (nothing to keep alive)
+  // and when the page is hidden (user isn't actually looking).
+  useEffect(() => {
+    if (!instanceId || isPaused) return;
+
+    const ping = () => {
+      if (document.visibilityState !== "visible") return;
+      api().TouchSession(instanceId).catch(() => {
+        // TouchSession is best-effort; ignore transient failures.
+      });
+    };
+
+    ping();
+    const id = window.setInterval(ping, KEEPALIVE_INTERVAL_MS);
+    const onVisibility = () => { if (document.visibilityState === "visible") ping(); };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [instanceId, isPaused]);
 
   // Handle Cmd+/Cmd- for terminal font zoom
   useEffect(() => {
@@ -76,10 +111,22 @@ export function TerminalPane({ sessionId, wsPort, focused, instanceId }: Termina
     return () => window.removeEventListener("focus", onWindowFocus);
   }, [focused, termRef]);
 
-  const status = useSessionStore((s) => instanceId ? s.statuses.get(instanceId) : undefined);
   const sshDisconnected = status?.sshConnected === false;
 
-  const showOverlay = sshDisconnected || disconnected;
+  const showOverlay = sshDisconnected || disconnected || isPaused;
+
+  const handleResume = useCallback(async () => {
+    if (!instanceId || resuming) return;
+    setResuming(true);
+    try {
+      const newPtyId = await api().OpenSession(instanceId);
+      openTab(instanceId, newPtyId);
+    } catch (err) {
+      console.error("Failed to resume session:", err);
+    } finally {
+      setResuming(false);
+    }
+  }, [instanceId, resuming, openTab]);
 
   // Handle file drops via Wails runtime
   useEffect(() => {
@@ -174,10 +221,37 @@ export function TerminalPane({ sessionId, wsPort, focused, instanceId }: Termina
             borderRadius: 2,
           }}
         >
-          <div style={{ fontSize: 24 }}>{"\u23F3"}</div>
-          <div style={{ color: "var(--subtext0)", fontSize: 13 }}>
-            Connection lost — reconnecting...
-          </div>
+          {isPaused ? (
+            <>
+              <div style={{ fontSize: 24 }}>{"⏸"}</div>
+              <div style={{ color: "var(--subtext0)", fontSize: 13 }}>
+                Session paused due to inactivity
+              </div>
+              <button
+                onClick={handleResume}
+                disabled={resuming}
+                style={{
+                  padding: "6px 14px",
+                  background: "var(--blue)",
+                  color: "var(--base)",
+                  border: "none",
+                  borderRadius: 4,
+                  fontSize: 13,
+                  cursor: resuming ? "default" : "pointer",
+                  opacity: resuming ? 0.6 : 1,
+                }}
+              >
+                {resuming ? "Resuming..." : "Resume"}
+              </button>
+            </>
+          ) : (
+            <>
+              <div style={{ fontSize: 24 }}>{"⏳"}</div>
+              <div style={{ color: "var(--subtext0)", fontSize: 13 }}>
+                Connection lost — reconnecting...
+              </div>
+            </>
+          )}
         </div>
       )}
     </div>

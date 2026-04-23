@@ -85,6 +85,8 @@ export function StartSession(arg1:string):Promise<void>;
 
 export function StopIndexer(arg1:string):Promise<void>;
 
+export function TouchSession(arg1:string):Promise<void>;
+
 export function TestHost(arg1:app.CreateHostOptions,arg2:string):Promise<app.TestHostResult>;
 
 export function UpdateHost(arg1:app.CreateHostOptions,arg2:string):Promise<void>;

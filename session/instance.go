@@ -13,8 +13,6 @@ import (
 	"os"
 	"strings"
 	"time"
-
-	"github.com/atotto/clipboard"
 )
 
 func generateUUID() string {
@@ -667,7 +665,10 @@ func (i *Instance) ForcePause() {
 	i.SetStatus(Paused)
 }
 
-// Pause stops the process and removes the worktree, preserving the branch
+// Pause stops the process but leaves the worktree on disk. The worktree
+// (including any uncommitted changes inside submodules) is preserved for
+// the user; Resume() just spawns a fresh process in the same directory.
+// Only Kill() (explicit session deletion) removes the worktree.
 func (i *Instance) Pause() error {
 	if !i.started {
 		return fmt.Errorf("cannot pause instance that has not been started")
@@ -691,66 +692,26 @@ func (i *Instance) Pause() error {
 		return nil
 	}
 
-	var errs []error
-
-	// Check if there are any changes to commit
-	if dirty, err := i.gitWorktree.IsDirty(); err != nil {
-		errs = append(errs, fmt.Errorf("failed to check if worktree is dirty: %w", err))
-		log.ErrorLog.Print(err)
-	} else if dirty {
-		// Commit changes locally (without pushing to GitHub)
-		commitMsg := fmt.Sprintf("[claudesquad] update from '%s' on %s (paused)", i.Title, time.Now().Format(time.RFC822))
-		if err := i.gitWorktree.CommitChanges(commitMsg); err != nil {
-			errs = append(errs, fmt.Errorf("failed to commit changes: %w", err))
-			log.ErrorLog.Print(err)
-			// Return early if we can't commit changes to avoid corrupted state
-			return i.combineErrors(errs)
-		}
-	}
-
-	// Kill the process (process dies on pause, branch preserved)
+	// Kill the main process. Continue on failure — we still want to transition
+	// to Paused so the UI reflects reality and Resume() can respawn cleanly.
 	if i.processManager == nil {
 		return fmt.Errorf("process manager is nil")
 	}
 	if i.processID != "" {
 		if err := i.processManager.Kill(i.processID); err != nil {
-			errs = append(errs, fmt.Errorf("failed to kill process: %w", err))
-			log.ErrorLog.Print(err)
-			// Continue with pause process even if kill fails
+			log.ErrorLog.Printf("pause: failed to kill process %s: %v", i.processID, err)
 		}
 		i.processID = ""
 	}
 
-	// Kill orphaned child processes (dev servers, watchers) that reference
-	// this worktree before removing the directory.
+	// Kill orphaned child processes (dev servers, watchers) spawned from the
+	// worktree so they release ports and file handles. The worktree itself
+	// stays on disk.
 	if i.gitWorktree != nil {
 		KillWorktreeProcesses(i.gitWorktree.GetWorktreePath())
 	}
 
-	// Check if worktree exists before trying to remove it
-	if i.pathExists(i.gitWorktree.GetWorktreePath()) {
-		// Remove worktree but keep branch
-		if err := i.gitWorktree.Remove(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to remove git worktree: %w", err))
-			log.ErrorLog.Print(err)
-			return i.combineErrors(errs)
-		}
-
-		// Only prune if remove was successful
-		if err := i.gitWorktree.Prune(); err != nil {
-			errs = append(errs, fmt.Errorf("failed to prune git worktrees: %w", err))
-			log.ErrorLog.Print(err)
-			return i.combineErrors(errs)
-		}
-	}
-
-	if err := i.combineErrors(errs); err != nil {
-		log.ErrorLog.Print(err)
-		return err
-	}
-
 	i.SetStatus(Paused)
-	_ = clipboard.WriteAll(i.gitWorktree.GetBranchName())
 	return nil
 }
 

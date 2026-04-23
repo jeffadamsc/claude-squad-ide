@@ -5,7 +5,6 @@ go 1.23.0
 toolchain go1.24.1
 
 require (
-	github.com/atotto/clipboard v0.1.4
 	github.com/blevesearch/bleve/v2 v2.5.7
 	github.com/creack/pty v1.1.24
 	github.com/gorilla/websocket v1.5.3

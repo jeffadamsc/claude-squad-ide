@@ -8,6 +8,10 @@ import { useSessionStore } from "../store/sessionStore";
 interface UseTerminalOptions {
   sessionId: string;
   wsPort: number;
+  // When true, skip auto-reconnect after a WS close. The session is known to
+  // be paused on the backend, so the PTY id is stale — retrying just produces
+  // 404s. The parent shows a Resume overlay instead.
+  paused?: boolean;
 }
 
 const INITIAL_RECONNECT_DELAY = 1000;
@@ -30,6 +34,8 @@ export function useTerminal(
   const terminalFontSize = useSessionStore((s) => s.terminalFontSize);
 
   const { sessionId } = options;
+  const pausedRef = useRef(options.paused ?? false);
+  pausedRef.current = options.paused ?? false;
 
   // Read/write scroll lock from the store so it persists across tab switches
   const isLocked = useCallback(() => {
@@ -105,6 +111,7 @@ export function useTerminal(
     ws.onclose = () => {
       if (intentionalClose.current) return;
       setDisconnected(true);
+      if (pausedRef.current) return;
       scheduleReconnect();
     };
 
@@ -188,6 +195,7 @@ export function useTerminal(
     ws.onclose = () => {
       if (intentionalClose.current) return;
       setDisconnected(true);
+      if (pausedRef.current) return;
       scheduleReconnect();
     };
 

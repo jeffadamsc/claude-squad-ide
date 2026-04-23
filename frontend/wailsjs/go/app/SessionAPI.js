@@ -166,6 +166,10 @@ export function StopIndexer(arg1) {
   return window['go']['app']['SessionAPI']['StopIndexer'](arg1);
 }
 
+export function TouchSession(arg1) {
+  return window['go']['app']['SessionAPI']['TouchSession'](arg1);
+}
+
 export function TestHost(arg1, arg2) {
   return window['go']['app']['SessionAPI']['TestHost'](arg1, arg2);
 }

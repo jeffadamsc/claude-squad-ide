@@ -446,6 +446,21 @@ func (api *SessionAPI) OpenSession(id string) (string, error) {
 	return ptyID, nil
 }
 
+// TouchSession marks the session as currently being viewed, refreshing its
+// LastViewed timestamp so the auto-pauser won't kill it. Called by the
+// frontend on a timer while the session's terminal is mounted and visible.
+// Cheap and idempotent; no-op for unknown or paused sessions.
+func (api *SessionAPI) TouchSession(id string) error {
+	api.mu.RLock()
+	defer api.mu.RUnlock()
+	inst, ok := api.instances[id]
+	if !ok {
+		return nil
+	}
+	inst.TouchLastViewed()
+	return nil
+}
+
 func (api *SessionAPI) StartSession(id string) error {
 	log.InfoLog.Printf("StartSession called for id=%q", id)
 	api.mu.Lock()

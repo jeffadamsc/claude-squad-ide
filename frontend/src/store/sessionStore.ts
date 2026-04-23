@@ -214,7 +214,23 @@ export const useSessionStore = create<SessionState>((set, get) => ({
     const { tabs } = get();
     const existing = tabs.find((t) => t.sessionId === sessionId);
     if (existing) {
-      set({ activeTabId: existing.id });
+      // If the ptyId changed (e.g. session was paused and resumed with a fresh
+      // PTY), update the tab so TerminalPane remounts against the new ptyId.
+      // Without this, the tab keeps trying to connect to a dead PTY.
+      if (existing.ptyId !== ptyId) {
+        const nextScroll = new Map(get().scrollLockedToBottom);
+        nextScroll.delete(existing.ptyId);
+        nextScroll.set(ptyId, true);
+        set((state) => ({
+          tabs: state.tabs.map((t) =>
+            t.id === existing.id ? { ...t, ptyId } : t
+          ),
+          activeTabId: existing.id,
+          scrollLockedToBottom: nextScroll,
+        }));
+      } else {
+        set({ activeTabId: existing.id });
+      }
       return;
     }
     const tabId = `tab-${++tabCounter}`;

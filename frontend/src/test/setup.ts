@@ -7,6 +7,7 @@ const mockSessionAPI = {
   LoadSessions: vi.fn().mockResolvedValue([]),
   DeleteSession: vi.fn(),
   OpenSession: vi.fn().mockResolvedValue("pty-1"),
+  TouchSession: vi.fn().mockResolvedValue(undefined),
   StartSession: vi.fn(),
   PauseSession: vi.fn(),
   ResumeSession: vi.fn(),

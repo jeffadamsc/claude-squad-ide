@@ -106,6 +106,7 @@ declare global {
           LoadSessions(): Promise<SessionInfo[]>;
           DeleteSession(id: string): Promise<void>;
           OpenSession(id: string): Promise<string>;
+          TouchSession(id: string): Promise<void>;
           StartSession(id: string): Promise<void>;
           PauseSession(id: string): Promise<void>;
           ResumeSession(id: string): Promise<void>;
