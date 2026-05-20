@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -606,6 +607,9 @@ func (api *SessionAPI) LoadSessions() ([]SessionInfo, error) {
 	for _, inst := range api.instances {
 		result = append(result, instanceToInfo(inst))
 	}
+	sort.Slice(result, func(i, j int) bool {
+		return strings.ToLower(result[i].Title) < strings.ToLower(result[j].Title)
+	})
 	return result, nil
 }
 

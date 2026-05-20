@@ -30,6 +30,12 @@ const DEFAULT_FONT_SIZE = 13;
 const FONT_SIZE_KEY = "cs-editor-font-size";
 const TERMINAL_FONT_SIZE_KEY = "cs-terminal-font-size";
 
+function sortSessions(sessions: SessionInfo[]): SessionInfo[] {
+  return [...sessions].sort((a, b) =>
+    a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true })
+  );
+}
+
 function loadPersistedFontSize(key: string): number {
   try {
     const stored = localStorage.getItem(key);
@@ -152,7 +158,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   terminalFontSize: loadPersistedFontSize(TERMINAL_FONT_SIZE_KEY),
   scrollLockedToBottom: new Map(),
 
-  setSessions: (sessions) => set({ sessions }),
+  setSessions: (sessions) => set({ sessions: sortSessions(sessions) }),
 
   updateStatuses: (statuses) => {
     const map = new Map<string, SessionStatus>();
@@ -188,7 +194,7 @@ export const useSessionStore = create<SessionState>((set, get) => ({
   },
 
   addSession: (session) =>
-    set((state) => ({ sessions: [...state.sessions, session] })),
+    set((state) => ({ sessions: sortSessions([...state.sessions, session]) })),
 
   removeSession: (id) =>
     set((state) => ({

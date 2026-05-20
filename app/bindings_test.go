@@ -35,6 +35,35 @@ func TestSessionAPI_CreateAndLoad(t *testing.T) {
 	assert.Equal(t, "test-session", sessions[0].Title)
 }
 
+func TestLoadSessions_ReturnsAlphanumericOrder(t *testing.T) {
+	api := newTestAPI(t)
+
+	// Insert in a non-sorted order. Mix cases so we also exercise the
+	// case-insensitive comparison.
+	titles := []string{"zeta", "Bravo", "alpha", "Charlie", "delta"}
+	for _, title := range titles {
+		_, err := api.CreateSession(CreateOptions{
+			Title:   title,
+			Path:    "/tmp",
+			Program: "echo",
+		})
+		require.NoError(t, err)
+	}
+
+	// Call LoadSessions multiple times; Go map iteration is randomized,
+	// so a buggy implementation can pass once by luck.
+	want := []string{"alpha", "Bravo", "Charlie", "delta", "zeta"}
+	for i := 0; i < 20; i++ {
+		got, err := api.LoadSessions()
+		require.NoError(t, err)
+		gotTitles := make([]string, len(got))
+		for j, s := range got {
+			gotTitles[j] = s.Title
+		}
+		assert.Equal(t, want, gotTitles, "iteration %d", i)
+	}
+}
+
 func TestSessionAPI_GetWebSocketPort(t *testing.T) {
 	api := newTestAPI(t)
 	port := api.GetWebSocketPort()

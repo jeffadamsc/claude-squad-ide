@@ -249,6 +249,7 @@ export namespace app {
 	    diffStats: DiffStats;
 	    hasPrompt: boolean;
 	    sshConnected?: boolean;
+	    autoPaused: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new SessionStatus(source);
@@ -262,6 +263,7 @@ export namespace app {
 	        this.diffStats = this.convertValues(source["diffStats"], DiffStats);
 	        this.hasPrompt = source["hasPrompt"];
 	        this.sshConnected = source["sshConnected"];
+	        this.autoPaused = source["autoPaused"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
