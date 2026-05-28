@@ -14,7 +14,8 @@ import (
 var ErrCommandTimeout = errors.New("command timed out")
 
 // runCommandWithTimeout runs an arbitrary command (not just git) under a
-// per-attempt timeout, retrying up to attempts-1 times on timeout or non-zero exit.
+// per-attempt timeout, making up to `attempts` total attempts. Only timeouts
+// trigger a retry — non-timeout failures are returned immediately.
 //
 // On cancellation, the entire process group is killed (negative PID kill).
 // This is the fix for the observed bug where killing the parent git process
@@ -66,6 +67,14 @@ func runOneAttempt(dir string, timeout time.Duration, name string, args ...strin
 	// Put the child in its own process group so we can kill the whole tree
 	// (including grandchildren like ssh) by signalling -pgid.
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// WaitDelay caps the pipe-drain phase that follows Cancel. Without it,
+	// CombinedOutput reads until EOF — if a grandchild survives SIGKILL (e.g.,
+	// uninterruptible kernel wait) the parent can still hang on the pipe.
+	// The +500ms headroom avoids false positives on slow machines.
+	cmd.WaitDelay = timeout + 500*time.Millisecond
+	// We return nil from Cancel so the subsequent Wait/CombinedOutput error is the
+	// context error (DeadlineExceeded). The caller below distinguishes timeouts via
+	// ctx.Err(), not the returned err.
 	cmd.Cancel = func() error {
 		// Negative PID = signal the entire process group.
 		// We use SIGKILL because git/ssh sometimes ignore SIGTERM during network ops.

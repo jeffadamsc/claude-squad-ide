@@ -57,10 +57,10 @@ func TestRunCommandWithTimeout_RetryThenSucceed(t *testing.T) {
 	// State is tracked via a marker file in the script's directory.
 	marker := filepath.Join(t.TempDir(), "marker")
 	script := helperScriptPath(t, "flaky.sh", `#!/usr/bin/env bash
-if [ -f `+marker+` ]; then
+if [ -f '`+marker+`' ]; then
   exit 0
 fi
-touch `+marker+`
+touch '`+marker+`'
 sleep 5
 `)
 	gw := &GitWorktree{}
@@ -78,6 +78,17 @@ func TestRunCommandWithTimeout_AllAttemptsFail(t *testing.T) {
 	}
 }
 
+func TestRunCommandWithTimeout_ClampsAttemptsBelowOne(t *testing.T) {
+	gw := &GitWorktree{}
+	out, err := gw.runCommandWithTimeout("", 2*time.Second, 0, "echo", "clamped")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "clamped") {
+		t.Fatalf("expected output to contain 'clamped', got %q", out)
+	}
+}
+
 func TestRunCommandWithTimeout_KillsChildProcessGroup(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("process-group kill is POSIX-only")
@@ -89,7 +100,7 @@ func TestRunCommandWithTimeout_KillsChildProcessGroup(t *testing.T) {
 	out := filepath.Join(t.TempDir(), "child.pid")
 	script := helperScriptPath(t, "spawn.sh", `#!/usr/bin/env bash
 sleep 30 &
-echo -n $! > `+out+`
+echo -n $! > '`+out+`'
 wait
 `)
 	gw := &GitWorktree{}
