@@ -420,3 +420,18 @@ func isSubmoduleDirEmpty(dir string) (bool, error) {
 	}
 	return true, nil
 }
+
+// RetrySubmodule re-runs init+fetch+verify for a single submodule by name.
+// It's a thin public wrapper over initFetchAndVerifyOne so app-layer code
+// doesn't need to reach into the unexported method.
+//
+// Defense-in-depth: names containing ".." or starting with "/" are rejected
+// to guard against path-traversal if a caller passes attacker-influenced input.
+func (g *GitWorktree) RetrySubmodule(name string) (SubmoduleSetupResult, bool) {
+	if strings.Contains(name, "..") || strings.HasPrefix(name, "/") {
+		result := SubmoduleSetupResult{Name: name, Stage: SubmoduleStageInit}
+		result.Err = fmt.Errorf("invalid submodule name %q", name)
+		return result, false
+	}
+	return g.initFetchAndVerifyOne(name)
+}

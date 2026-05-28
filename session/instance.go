@@ -11,6 +11,7 @@ import (
 
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 	"time"
 )
@@ -886,6 +887,43 @@ func (i *Instance) GetSubmoduleFailures() []git.SubmoduleSetupResult {
 	out := make([]git.SubmoduleSetupResult, len(i.submoduleFailures))
 	copy(out, i.submoduleFailures)
 	return out
+}
+
+// RetrySubmodules re-runs init+fetch+verify for the named submodules and
+// updates the recorded submoduleFailures slice. Submodules that succeed on
+// this retry are removed from the slice; submodules that still fail are
+// updated with the new error/stage.
+//
+// Returns an error only for outright unrecoverable problems (no worktree).
+// Per-submodule failures are observable via GetSubmoduleFailures.
+func (i *Instance) RetrySubmodules(names []string) error {
+	if i.gitWorktree == nil {
+		return fmt.Errorf("instance has no git worktree")
+	}
+	// Build a quick lookup of the previously-failing submodules so we
+	// preserve any not-named-in-this-retry entries.
+	prev := map[string]git.SubmoduleSetupResult{}
+	for _, r := range i.submoduleFailures {
+		prev[r.Name] = r
+	}
+	// Run retry per name.
+	for _, name := range names {
+		res, ok := i.gitWorktree.RetrySubmodule(name)
+		if ok {
+			delete(prev, name)
+		} else {
+			prev[name] = res
+		}
+	}
+	// Rebuild the failures slice in deterministic order (sorted by name)
+	// so the UI doesn't shuffle items between retries.
+	failures := make([]git.SubmoduleSetupResult, 0, len(prev))
+	for _, r := range prev {
+		failures = append(failures, r)
+	}
+	sort.Slice(failures, func(a, b int) bool { return failures[a].Name < failures[b].Name })
+	i.submoduleFailures = failures
+	return nil
 }
 
 // claudeSessionFile represents the JSON structure of ~/.claude/sessions/<PID>.json

@@ -165,3 +165,11 @@ func TestInstance_SubmoduleFailures_OverwritePrevious(t *testing.T) {
 		t.Errorf("after set-nil, expected empty")
 	}
 }
+
+func TestInstance_RetrySubmodules_NoWorktree(t *testing.T) {
+	i := &Instance{}
+	err := i.RetrySubmodules([]string{"x"})
+	if err == nil {
+		t.Fatal("expected error for instance without git worktree")
+	}
+}

@@ -580,6 +580,30 @@ func (api *SessionAPI) StartSession(id string) error {
 	return nil
 }
 
+// RetrySubmoduleSetup re-runs init+fetch+verify for the named submodules of
+// the given session, then re-emits the submodule-warnings event with the
+// updated failure list. The event payload's Failures slice will be empty
+// if every submodule succeeded.
+//
+// Returns an error if the session is not found. Per-submodule failures are
+// reported via the re-emitted event, not the return value.
+func (api *SessionAPI) RetrySubmoduleSetup(sessionID string, names []string) error {
+	log.InfoLog.Printf("RetrySubmoduleSetup: session=%q names=%v", sessionID, names)
+	api.mu.RLock()
+	inst, ok := api.instances[sessionID]
+	api.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	if err := inst.RetrySubmodules(names); err != nil {
+		return fmt.Errorf("retry submodules: %w", err)
+	}
+	// Always emit — an empty Failures slice tells the frontend to close the dialog.
+	payload, _ := buildSubmoduleWarningsPayload(inst)
+	api.emitSubmoduleWarnings(payload)
+	return nil
+}
+
 func (api *SessionAPI) PauseSession(id string) error {
 	api.mu.Lock()
 	defer api.mu.Unlock()
