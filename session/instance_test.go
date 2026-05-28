@@ -2,6 +2,8 @@ package session
 
 import (
 	"claude-squad/log"
+	"claude-squad/session/git"
+	"errors"
 	"os"
 	"testing"
 )
@@ -132,5 +134,34 @@ func TestLastViewed(t *testing.T) {
 	inst.TouchLastViewed()
 	if inst.LastViewed.IsZero() {
 		t.Error("expected LastViewed to be set after TouchLastViewed")
+	}
+}
+
+func TestInstance_SubmoduleFailures_DefaultEmpty(t *testing.T) {
+	i := &Instance{}
+	got := i.GetSubmoduleFailures()
+	if len(got) != 0 {
+		t.Errorf("default failures = %v, want empty", got)
+	}
+}
+
+func TestInstance_SubmoduleFailures_SetAndGet(t *testing.T) {
+	i := &Instance{}
+	failures := []git.SubmoduleSetupResult{
+		{Name: "a", Stage: git.SubmoduleStageFetch, Err: errors.New("timeout")},
+	}
+	i.setSubmoduleFailures(failures)
+	got := i.GetSubmoduleFailures()
+	if len(got) != 1 || got[0].Name != "a" {
+		t.Errorf("after set, got %+v", got)
+	}
+}
+
+func TestInstance_SubmoduleFailures_OverwritePrevious(t *testing.T) {
+	i := &Instance{}
+	i.setSubmoduleFailures([]git.SubmoduleSetupResult{{Name: "a"}, {Name: "b"}})
+	i.setSubmoduleFailures(nil)
+	if len(i.GetSubmoduleFailures()) != 0 {
+		t.Errorf("after set-nil, expected empty")
 	}
 }

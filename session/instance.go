@@ -98,6 +98,11 @@ type Instance struct {
 	processID string
 	// gitWorktree is the git worktree for the instance.
 	gitWorktree *git.GitWorktree
+
+	// submoduleFailures records any submodules that ended in a bad state
+	// after the most recent Setup or RetrySubmoduleSetup. In-memory only;
+	// not persisted to state.json.
+	submoduleFailures []git.SubmoduleSetupResult
 }
 
 // ToInstanceData converts an Instance to its serializable form
@@ -867,10 +872,20 @@ func (i *Instance) SendKeys(keys string) error {
 	return i.processManager.Write(i.processID, []byte(keys))
 }
 
-// setSubmoduleFailures is filled in by Task 5; this stub exists so Task 4 can
-// land without a compile break. Currently a no-op.
+// setSubmoduleFailures replaces the recorded failures. Passing nil clears the list.
 func (i *Instance) setSubmoduleFailures(failures []git.SubmoduleSetupResult) {
-	_ = failures
+	i.submoduleFailures = failures
+}
+
+// GetSubmoduleFailures returns a copy of the recorded submodule failures.
+// Returns nil when nothing has failed.
+func (i *Instance) GetSubmoduleFailures() []git.SubmoduleSetupResult {
+	if len(i.submoduleFailures) == 0 {
+		return nil
+	}
+	out := make([]git.SubmoduleSetupResult, len(i.submoduleFailures))
+	copy(out, i.submoduleFailures)
+	return out
 }
 
 // claudeSessionFile represents the JSON structure of ~/.claude/sessions/<PID>.json
