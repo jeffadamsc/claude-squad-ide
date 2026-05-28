@@ -53,18 +53,21 @@ func TestRunCommandWithTimeout_TimesOut(t *testing.T) {
 }
 
 func TestRunCommandWithTimeout_RetryThenSucceed(t *testing.T) {
-	// Use a script that sleeps 5s on first call but exits 0 on second.
+	// Use a script that sleeps long on first call but exits 0 on second.
 	// State is tracked via a marker file in the script's directory.
+	// The timeout is intentionally generous (2s) — this test exercises retry
+	// semantics, not timeout precision. A tighter timeout flakes on busy
+	// machines where bash startup + filesystem access can blow past 200ms.
 	marker := filepath.Join(t.TempDir(), "marker")
 	script := helperScriptPath(t, "flaky.sh", `#!/usr/bin/env bash
 if [ -f '`+marker+`' ]; then
   exit 0
 fi
 touch '`+marker+`'
-sleep 5
+sleep 30
 `)
 	gw := &GitWorktree{}
-	_, err := gw.runCommandWithTimeout("", 200*time.Millisecond, 2, script)
+	_, err := gw.runCommandWithTimeout("", 2*time.Second, 2, script)
 	if err != nil {
 		t.Fatalf("expected success after retry, got %v", err)
 	}
