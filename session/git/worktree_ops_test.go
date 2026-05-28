@@ -5,7 +5,14 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"claude-squad/log"
 )
+
+func init() {
+	// Initialize the logger so tests that exercise log.WarningLog don't panic.
+	log.Initialize(false)
+}
 
 func TestInitFetchAndVerifyOne_InitFailsRecorded(t *testing.T) {
 	// A worktree whose submodule "missing" cannot be init'd. The helper should
@@ -153,5 +160,67 @@ func TestInitAndFetchSubmodules_NoSubmodulesRegisteredReturnsNil(t *testing.T) {
 	}
 	if results != nil {
 		t.Errorf("expected nil results, got %+v", results)
+	}
+}
+
+// stubPartialFailExecutor enumerates two submodules ("good" and "bad") and
+// fails the "git submodule update --init" call only for "bad". "good" passes
+// init+fetch+checkout but fails at the verify stage because the stub never
+// actually populates the directory.
+type stubPartialFailExecutor struct{}
+
+func (s *stubPartialFailExecutor) Run(dir, name string, args ...string) ([]byte, error) {
+	// git config -f .gitmodules --get-regexp -> two submodule path entries
+	if name == "git" && len(args) >= 6 && args[2] == "config" && args[3] == "-f" && args[4] == ".gitmodules" {
+		return []byte("submodule.good.path good\nsubmodule.bad.path bad\n"), nil
+	}
+	// Fail init for "bad" only
+	if name == "git" && len(args) >= 3 && args[0] == "submodule" && args[1] == "update" && args[2] == "--init" {
+		for _, a := range args {
+			if a == "bad" {
+				return []byte(""), errors.New("simulated init failure for bad")
+			}
+		}
+	}
+	// Everything else: silent success
+	return []byte{}, nil
+}
+
+func TestInitAndFetchSubmodules_PartialFailure(t *testing.T) {
+	wt := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wt, ".gitmodules"), []byte("placeholder"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// Create both subdirs so the verify-stage stat call doesn't error out.
+	if err := os.MkdirAll(filepath.Join(wt, "good"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(wt, "bad"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	gw := &GitWorktree{
+		worktreePath: wt,
+		executor:     &stubPartialFailExecutor{},
+	}
+	results, err := gw.initAndFetchSubmodules()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// "bad" fails at init; "good" passes init+fetch+checkout but fails verify
+	// (the stub never populates the directory). Both appear in results,
+	// demonstrating per-submodule isolation: the loop continues past "bad".
+	if len(results) != 2 {
+		t.Fatalf("expected 2 results, got %d: %+v", len(results), results)
+	}
+	byName := map[string]SubmoduleSetupResult{}
+	for _, r := range results {
+		byName[r.Name] = r
+	}
+	if r, ok := byName["bad"]; !ok || r.Stage != SubmoduleStageInit {
+		t.Errorf("expected bad with init stage, got %+v", byName["bad"])
+	}
+	if r, ok := byName["good"]; !ok || r.Stage != SubmoduleStageVerify {
+		t.Errorf("expected good with verify stage, got %+v", byName["good"])
 	}
 }

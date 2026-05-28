@@ -29,7 +29,7 @@ export function SubmoduleWarningsDialog({
   const manualCmd =
     names.length === 0
       ? ""
-      : `cd ${payload.worktreePath} && git submodule update --init -- ${names.join(" ")}`;
+      : `cd '${payload.worktreePath}' && git submodule update --init -- ${names.join(" ")}`;
 
   return (
     <div

@@ -102,5 +102,10 @@ describe("SubmoduleWarningsDialog", () => {
         !!el?.textContent?.includes("git submodule update --init -- verve-backend-infra verve-portal"),
     );
     expect(matches.length).toBeGreaterThan(0);
+    const quotedPath = screen.getAllByText(
+      (_, el) =>
+        !!el?.textContent?.includes("cd '/Users/me/.claude-squad/worktrees/jadams/vistar_abc'"),
+    );
+    expect(quotedPath.length).toBeGreaterThan(0);
   });
 });

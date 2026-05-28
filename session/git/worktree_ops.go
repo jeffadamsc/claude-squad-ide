@@ -156,6 +156,11 @@ func (g *GitWorktree) runSubmoduleInit() (SetupResult, error) {
 //
 // The error return is reserved for "could not enumerate submodules" failures.
 // Per-submodule failures are reported via the slice — they never abort setup.
+//
+// This intentionally skips the bulk `git submodule update --init --recursive`
+// step that an earlier design called for. Per-submodule init via
+// initFetchAndVerifyOne provides better timeout isolation: if one submodule
+// hangs, only that submodule fails, not the entire batch.
 func (g *GitWorktree) initAndFetchSubmodules() ([]SubmoduleSetupResult, error) {
 	// Check if .gitmodules exists in the worktree
 	exec := g.getExecutor()
