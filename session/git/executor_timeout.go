@@ -1,0 +1,86 @@
+package git
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
+	"syscall"
+	"time"
+)
+
+// ErrCommandTimeout is returned when a command exceeds its per-attempt timeout
+// on every retry attempt. Wraps with errors.Is for caller checks.
+var ErrCommandTimeout = errors.New("command timed out")
+
+// runCommandWithTimeout runs an arbitrary command (not just git) under a
+// per-attempt timeout, retrying up to attempts-1 times on timeout or non-zero exit.
+//
+// On cancellation, the entire process group is killed (negative PID kill).
+// This is the fix for the observed bug where killing the parent git process
+// left its ssh child reparented to launchd and still consuming the network.
+//
+// For remote executors (SSH-to-remote) this falls back to the regular
+// runGitCommand path with no timeout — remote timeout semantics are out of
+// scope for v1.
+func (g *GitWorktree) runCommandWithTimeout(
+	path string,
+	perAttempt time.Duration,
+	attempts int,
+	name string,
+	args ...string,
+) (string, error) {
+	if _, isRemote := g.getExecutor().(*RemoteExecutor); isRemote {
+		// Fall through to remote: no timeout protection in v1.
+		out, err := g.getExecutor().Run(path, name, args...)
+		return string(out), err
+	}
+	if attempts < 1 {
+		attempts = 1
+	}
+
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		out, err := runOneAttempt(path, perAttempt, name, args...)
+		if err == nil {
+			return out, nil
+		}
+		lastErr = err
+		// Only retry on timeout. Non-timeout failures (e.g., git complaining about
+		// a missing ref) won't be fixed by retrying.
+		if !errors.Is(err, ErrCommandTimeout) {
+			return out, err
+		}
+	}
+	return "", lastErr
+}
+
+func runOneAttempt(dir string, timeout time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	// Put the child in its own process group so we can kill the whole tree
+	// (including grandchildren like ssh) by signalling -pgid.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		// Negative PID = signal the entire process group.
+		// We use SIGKILL because git/ssh sometimes ignore SIGTERM during network ops.
+		if cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return nil
+	}
+
+	out, err := cmd.CombinedOutput()
+	if ctx.Err() == context.DeadlineExceeded {
+		return string(out), fmt.Errorf("%w: %s %v after %s", ErrCommandTimeout, name, args, timeout)
+	}
+	if err != nil {
+		return string(out), err
+	}
+	return string(out), nil
+}
