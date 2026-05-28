@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Sidebar } from "./components/Sidebar/Sidebar";
 import { TabBar } from "./components/TabBar/TabBar";
 import { PaneManager } from "./components/Terminal/PaneManager";
@@ -24,6 +24,12 @@ export default function App() {
   const [submoduleWarnings, setSubmoduleWarnings] =
     useState<SubmoduleWarningsPayload | null>(null);
   const [submoduleRetrying, setSubmoduleRetrying] = useState(false);
+  const [creating, setCreating] = useState(false);
+  // Ref guard for re-entry: CreateSession can be slow (blocked on the Go-side
+  // mutex during a concurrent KillSession). If the JS event loop stalls and
+  // multiple Create clicks dispatch in the same tick, the `creating` state
+  // update from the first click hasn't propagated yet — the ref has.
+  const creatingRef = useRef(false);
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible);
   const scopeMode = useSessionStore((s) => s.scopeMode);
   const setSessions = useSessionStore((s) => s.setSessions);
@@ -86,6 +92,9 @@ export default function App() {
 
   const handleCreateSession = useCallback(
     async (opts: CreateOptions) => {
+      if (creatingRef.current) return;
+      creatingRef.current = true;
+      setCreating(true);
       try {
         const session = await api().CreateSession(opts);
         setShowNewSession(false);
@@ -98,6 +107,9 @@ export default function App() {
         });
       } catch (err) {
         console.error("Failed to create session:", err);
+      } finally {
+        creatingRef.current = false;
+        setCreating(false);
       }
     },
     [addSession, markLoading]
@@ -128,6 +140,7 @@ export default function App() {
           onCancel={() => setShowNewSession(false)}
           profiles={config.Profiles}
           defaultWorkDir={config.DefaultWorkDir}
+          submitting={creating}
         />
       )}
 
