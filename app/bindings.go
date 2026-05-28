@@ -66,6 +66,20 @@ type DiffStats struct {
 	Removed int `json:"removed"`
 }
 
+// SubmoduleWarningsPayload is the shape sent to the frontend via Wails
+// EventsEmit when a session ends up with broken submodules.
+type SubmoduleWarningsPayload struct {
+	SessionID    string                  `json:"sessionId"`
+	WorktreePath string                  `json:"worktreePath"`
+	Failures     []SubmoduleFailureEntry `json:"failures"`
+}
+
+type SubmoduleFailureEntry struct {
+	Name  string `json:"name"`
+	Stage string `json:"stage"`
+	Error string `json:"error"`
+}
+
 type DiffFileResult struct {
 	Path       string `json:"path"`
 	OldContent string `json:"oldContent"`
@@ -191,6 +205,41 @@ func NewSessionAPI(opts SessionAPIOptions) (*SessionAPI, error) {
 // SetContext stores the Wails application context needed for native dialogs.
 func (api *SessionAPI) SetContext(ctx context.Context) {
 	api.ctx = ctx
+}
+
+// emitSubmoduleWarnings sends the warnings event to the frontend.
+// Safe to call even if api.ctx is nil (logs and returns).
+func (api *SessionAPI) emitSubmoduleWarnings(payload SubmoduleWarningsPayload) {
+	if api.ctx == nil {
+		log.WarningLog.Printf("emitSubmoduleWarnings: ctx is nil, dropping event for session %s", payload.SessionID)
+		return
+	}
+	wailsRuntime.EventsEmit(api.ctx, "session:submodule-warnings", payload)
+}
+
+// buildSubmoduleWarningsPayload converts session-layer failures into the
+// frontend-facing payload. Always sets SessionID and WorktreePath; returns
+// ok=false when there are no failures (callers may still emit the payload
+// to signal "all clear" for a previously-shown dialog).
+func buildSubmoduleWarningsPayload(inst *session.Instance) (SubmoduleWarningsPayload, bool) {
+	payload := SubmoduleWarningsPayload{
+		SessionID:    inst.Title,
+		WorktreePath: inst.GetWorktreePath(),
+	}
+	failures := inst.GetSubmoduleFailures()
+	if len(failures) == 0 {
+		return payload, false
+	}
+	entries := make([]SubmoduleFailureEntry, len(failures))
+	for i, f := range failures {
+		entries[i] = SubmoduleFailureEntry{
+			Name:  f.Name,
+			Stage: string(f.Stage),
+			Error: f.ErrorString(),
+		}
+	}
+	payload.Failures = entries
+	return payload, true
 }
 
 // SelectFile opens a native file dialog starting at the given directory.
@@ -504,6 +553,15 @@ func (api *SessionAPI) StartSession(id string) error {
 	api.mu.Lock()
 	api.dirty = true
 	api.saveInstancesLocked()
+
+	// Surface any submodule failures to the frontend. Drop the lock first —
+	// emitSubmoduleWarnings doesn't touch shared state and we don't want
+	// the Wails dispatch to be on the hot path.
+	if payload, ok := buildSubmoduleWarningsPayload(inst); ok {
+		api.mu.Unlock()
+		api.emitSubmoduleWarnings(payload)
+		api.mu.Lock()
+	}
 
 	// Auto-start indexer for local sessions so MCP tools work immediately.
 	// Remote sessions aren't supported yet for indexing.
