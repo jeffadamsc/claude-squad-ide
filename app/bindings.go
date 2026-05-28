@@ -654,26 +654,30 @@ func (api *SessionAPI) ResumeSession(id string) error {
 
 func (api *SessionAPI) KillSession(id string) error {
 	api.mu.Lock()
-	defer api.mu.Unlock()
-
 	inst, ok := api.instances[id]
 	if !ok {
+		api.mu.Unlock()
 		return fmt.Errorf("session %s not found", id)
 	}
 
-	// Stop the indexer goroutine before removing the session.
+	// Remove the session from the map and stop the indexer while holding the
+	// lock — these are fast and need to be atomic with the lookup so a
+	// concurrent caller can't observe a half-killed session.
 	if idx, ok := api.indexers[id]; ok {
 		idx.Stop()
 		delete(api.indexers, id)
 	}
-
-	if err := inst.Kill(); err != nil {
-		log.ErrorLog.Printf("kill session %q cleanup error (session will still be removed): %v", id, err)
-	}
-
 	delete(api.instances, id)
 	api.dirty = true
 	api.saveInstancesLocked()
+	api.mu.Unlock()
+
+	// inst.Kill() is slow (git worktree remove can take minutes on submodule
+	// heavy repos). Do it outside the lock so concurrent CreateSession /
+	// PollAllStatuses calls don't block the UI for the duration.
+	if err := inst.Kill(); err != nil {
+		log.ErrorLog.Printf("kill session %q cleanup error (session was already removed): %v", id, err)
+	}
 	return nil
 }
 
