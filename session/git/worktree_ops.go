@@ -383,7 +383,12 @@ func (g *GitWorktree) initFetchAndVerifyOne(submoduleRel string) (SubmoduleSetup
 	return result, true
 }
 
-// isSubmoduleDirEmpty returns true if the directory has no non-`.git` entries.
+// isSubmoduleDirEmpty returns true if the directory contains nothing other
+// than a `.git` entry. A submodule whose working tree is just `.git` is
+// flagged as a failure deliberately — submodules in this codebase always
+// contain source files, so a `.git`-only directory means the fetch+checkout
+// pipeline finished without populating content (the 2026-05-28 secondary
+// bug).
 func isSubmoduleDirEmpty(dir string) (bool, error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {

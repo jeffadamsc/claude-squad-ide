@@ -40,7 +40,12 @@ func (g *GitWorktree) runCommandWithTimeout(
 	case *LocalExecutor:
 		// Use direct os/exec with process-group kill support (the normal path).
 	default:
-		// Unknown executor (e.g., test stubs) — delegate without timeout.
+		// IMPORTANT: If you add a new executor type that should have timeout
+		// protection, add an explicit `case` entry above — do NOT rely on this
+		// default fallthrough. The default exists to let test stubs (which
+		// implement CommandExecutor but aren't *LocalExecutor) bypass the
+		// os/exec path; for production executors timeout bypass must be a
+		// conscious decision.
 		out, err := exec.Run(path, name, args...)
 		return string(out), err
 	}

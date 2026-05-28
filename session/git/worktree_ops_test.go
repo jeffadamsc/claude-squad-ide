@@ -8,17 +8,20 @@ import (
 )
 
 func TestInitFetchAndVerifyOne_InitFailsRecorded(t *testing.T) {
-	// A worktree whose submodule "missing" cannot be init'd (no .git in
-	// the worktree, no .gitmodules, no real remote). The helper should
-	// return an Init-stage failure rather than panicking or returning
-	// silent success.
+	// A worktree whose submodule "missing" cannot be init'd. The helper should
+	// return an Init-stage failure rather than panicking or returning silent
+	// success. Uses stubFailingInitExecutor to drive the Init failure path
+	// deterministically (no real git invocation).
 	wt := t.TempDir()
 	smPath := filepath.Join(wt, "missing")
 	if err := os.MkdirAll(smPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
-	gw := &GitWorktree{worktreePath: wt}
+	gw := &GitWorktree{
+		worktreePath: wt,
+		executor:     &stubFailingInitExecutor{},
+	}
 	res, ok := gw.initFetchAndVerifyOne("missing")
 	if ok {
 		t.Fatalf("expected failure, got success: %+v", res)
@@ -68,5 +71,17 @@ func TestSubmoduleSetupResult_ErrorString(t *testing.T) {
 type stubAlwaysOKExecutor struct{}
 
 func (s *stubAlwaysOKExecutor) Run(dir, name string, args ...string) ([]byte, error) {
+	return []byte{}, nil
+}
+
+// stubFailingInitExecutor fails any "git submodule update --init" call but
+// returns success (empty bytes) for every other command. Used to drive
+// initFetchAndVerifyOne into the Init-stage failure path deterministically.
+type stubFailingInitExecutor struct{}
+
+func (s *stubFailingInitExecutor) Run(dir, name string, args ...string) ([]byte, error) {
+	if name == "git" && len(args) >= 3 && args[0] == "submodule" && args[1] == "update" && args[2] == "--init" {
+		return []byte("simulated init failure"), errors.New("simulated init failure")
+	}
 	return []byte{}, nil
 }
