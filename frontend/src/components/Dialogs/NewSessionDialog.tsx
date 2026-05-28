@@ -10,6 +10,7 @@ interface NewSessionDialogProps {
   onCancel: () => void;
   profiles: { Name: string; Program: string }[];
   defaultWorkDir: string;
+  submitting?: boolean;
 }
 
 export function NewSessionDialog({
@@ -17,6 +18,7 @@ export function NewSessionDialog({
   onCancel,
   profiles,
   defaultWorkDir,
+  submitting = false,
 }: NewSessionDialogProps) {
   const hosts = useSessionStore((s) => s.hosts);
   const addHost = useSessionStore((s) => s.addHost);
@@ -364,18 +366,18 @@ export function NewSessionDialog({
                 hostId: selectedHostId || undefined,
               })
             }
-            disabled={!canCreate}
+            disabled={!canCreate || submitting}
             style={{
               padding: "8px 16px",
               background: "var(--blue)",
               color: "var(--crust)",
               border: "none",
               borderRadius: 6,
-              cursor: "pointer",
-              opacity: canCreate ? 1 : 0.5,
+              cursor: submitting ? "wait" : "pointer",
+              opacity: !canCreate || submitting ? 0.5 : 1,
             }}
           >
-            Create
+            {submitting ? "Creating..." : "Create"}
           </button>
         </div>
       </div>
