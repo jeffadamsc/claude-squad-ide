@@ -10,7 +10,8 @@ import (
 	"time"
 )
 
-const (
+// Exposed as var (not const) for test override; production callers should not mutate.
+var (
 	// submoduleInitTimeout bounds a single `git submodule update --init -- <name>` call.
 	submoduleInitTimeout = 2 * time.Minute
 	// submoduleFetchTimeout bounds a single `git fetch origin` inside one submodule.
