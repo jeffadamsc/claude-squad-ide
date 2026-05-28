@@ -116,11 +116,14 @@ func (g *GitWorktree) getExecutor() CommandExecutor {
 
 // runGitCommand executes a git command and returns any error.
 // Uses the configured executor (local or remote SSH).
+// On error, the raw output is returned alongside the error so callers can
+// inspect it as a tiebreaker (e.g. to distinguish "no keys matched" from a
+// real malformed-file error).
 func (g *GitWorktree) runGitCommand(path string, args ...string) (string, error) {
 	fullArgs := append([]string{"-C", path}, args...)
 	output, err := g.getExecutor().Run("", "git", fullArgs...)
 	if err != nil {
-		return "", fmt.Errorf("git command failed: %s (%w)", output, err)
+		return string(output), fmt.Errorf("git command failed: %s (%w)", output, err)
 	}
 
 	return string(output), nil

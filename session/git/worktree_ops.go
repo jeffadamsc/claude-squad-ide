@@ -167,10 +167,14 @@ func (g *GitWorktree) initAndFetchSubmodules() ([]SubmoduleSetupResult, error) {
 	output, err := g.runGitCommand(g.worktreePath, "config", "-f", ".gitmodules",
 		"--get-regexp", `^submodule\..*\.path$`)
 	if err != nil {
-		// No submodules registered, or .gitmodules is malformed. Either way,
-		// nothing to do.
-		log.WarningLog.Printf("submodule enumeration via git config failed: %v", err)
-		return nil, nil
+		// git config --get-regexp exits 1 when no keys match — this is the normal
+		// "no submodules registered" case (e.g., .gitmodules exists but is empty).
+		// We can't easily distinguish that from a real malformed-file error, so
+		// we use the trimmed output as a tiebreaker: empty output = no submodules.
+		if strings.TrimSpace(output) == "" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("submodule enumeration via git config: %w", err)
 	}
 
 	var failures []SubmoduleSetupResult

@@ -97,3 +97,61 @@ func TestInitAndFetchSubmodules_NoGitmodulesReturnsNil(t *testing.T) {
 		t.Errorf("expected nil results when .gitmodules missing, got %+v", results)
 	}
 }
+
+// stubEnumerationFailExecutor fails the `git config -f .gitmodules --get-regexp`
+// call with non-empty output (simulating a malformed .gitmodules), and returns
+// success for all other calls. Used to drive the new error-return path of
+// initAndFetchSubmodules.
+type stubEnumerationFailExecutor struct{}
+
+func (s *stubEnumerationFailExecutor) Run(dir, name string, args ...string) ([]byte, error) {
+	if name == "git" && len(args) >= 6 && args[2] == "config" && args[3] == "-f" && args[4] == ".gitmodules" {
+		return []byte("garbled output from a broken .gitmodules\n"), errors.New("fatal: bad config")
+	}
+	return []byte{}, nil
+}
+
+func TestInitAndFetchSubmodules_EnumerationErrorPropagates(t *testing.T) {
+	wt := t.TempDir()
+	// Create an empty .gitmodules so the existence check passes.
+	if err := os.WriteFile(filepath.Join(wt, ".gitmodules"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gw := &GitWorktree{
+		worktreePath: wt,
+		executor:     &stubEnumerationFailExecutor{},
+	}
+	_, err := gw.initAndFetchSubmodules()
+	if err == nil {
+		t.Fatal("expected enumeration error to bubble up, got nil")
+	}
+}
+
+// stubEmptyExit1Executor simulates `git config --get-regexp` exiting 1 with
+// empty output — the "no keys matched" case that should be treated silently.
+type stubEmptyExit1Executor struct{}
+
+func (s *stubEmptyExit1Executor) Run(dir, name string, args ...string) ([]byte, error) {
+	if name == "git" && len(args) >= 6 && args[2] == "config" && args[3] == "-f" && args[4] == ".gitmodules" {
+		return []byte(""), errors.New("exit status 1")
+	}
+	return []byte{}, nil
+}
+
+func TestInitAndFetchSubmodules_NoSubmodulesRegisteredReturnsNil(t *testing.T) {
+	wt := t.TempDir()
+	if err := os.WriteFile(filepath.Join(wt, ".gitmodules"), []byte(""), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gw := &GitWorktree{
+		worktreePath: wt,
+		executor:     &stubEmptyExit1Executor{},
+	}
+	results, err := gw.initAndFetchSubmodules()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if results != nil {
+		t.Errorf("expected nil results, got %+v", results)
+	}
+}
