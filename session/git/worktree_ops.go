@@ -73,7 +73,8 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 		if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, fmt.Sprintf("origin/%s", g.branchName)); err != nil {
 			return fmt.Errorf("failed to create worktree from remote branch %s: %w", g.branchName, err)
 		}
-		return g.initAndFetchSubmodules()
+		_, initErr := g.initAndFetchSubmodules()
+		return initErr
 	}
 
 	// Create a new worktree from the existing local branch
@@ -81,7 +82,8 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 		return fmt.Errorf("failed to create worktree from branch %s: %w", g.branchName, err)
 	}
 
-	return g.initAndFetchSubmodules()
+	_, initErr := g.initAndFetchSubmodules()
+	return initErr
 }
 
 // setupNewWorktree creates a new worktree from HEAD
@@ -112,7 +114,8 @@ func (g *GitWorktree) setupNewWorktree() error {
 		return fmt.Errorf("failed to create worktree from commit %s: %w", headCommit, err)
 	}
 
-	return g.initAndFetchSubmodules()
+	_, err = g.initAndFetchSubmodules()
+	return err
 }
 
 // setupFromRef creates a new worktree with a new branch based on a specific ref.
@@ -135,60 +138,63 @@ func (g *GitWorktree) setupFromRef() error {
 		return fmt.Errorf("failed to create worktree from ref %s: %w", g.baseRef, err)
 	}
 
-	return g.initAndFetchSubmodules()
+	_, err = g.initAndFetchSubmodules()
+	return err
 }
 
-// initAndFetchSubmodules initializes submodules in the worktree and checks out
-// origin/main (or origin/master) for each. Skips silently if the repo has no submodules.
-// Failures are logged but non-fatal — broken/empty submodules shouldn't block sessions.
-func (g *GitWorktree) initAndFetchSubmodules() error {
+// initAndFetchSubmodules initializes each submodule in the worktree with
+// per-submodule timeouts and retries. Returns a slice describing any
+// submodules that ended in a bad state; that slice is non-nil only on failures.
+//
+// The error return is reserved for "could not enumerate submodules" failures.
+// Per-submodule failures are reported via the slice — they never abort setup.
+func (g *GitWorktree) initAndFetchSubmodules() ([]SubmoduleSetupResult, error) {
 	// Check if .gitmodules exists in the worktree
 	exec := g.getExecutor()
 	if _, isRemote := exec.(*RemoteExecutor); isRemote {
 		if _, err := exec.Run("", "test", "-f", g.worktreePath+"/.gitmodules"); err != nil {
-			return nil // no submodules
+			return nil, nil // no submodules
 		}
 	} else {
 		if _, err := os.Stat(filepath.Join(g.worktreePath, ".gitmodules")); os.IsNotExist(err) {
-			return nil
+			return nil, nil
 		}
 	}
 
-	// Step 1: Initialize submodules with the recorded SHA first (this creates the directories)
-	if _, err := g.runGitCommand(g.worktreePath, "submodule", "update", "--init", "--recursive"); err != nil {
-		log.WarningLog.Printf("submodule init had errors (continuing anyway): %v", err)
-	}
-
-	// Step 2: For each submodule, fetch and checkout origin/main (or origin/master)
-	// This ensures submodules are on the latest remote main branch, not stale recorded SHAs.
-	output, err := g.runGitCommand(g.worktreePath, "submodule", "foreach", "--quiet", "--recursive", "echo $sm_path")
+	// Enumerate submodule paths from .gitmodules.
+	// We use `git config -f .gitmodules` rather than `submodule foreach` so a
+	// hang in one submodule's hooks can't block enumeration.
+	output, err := g.runGitCommand(g.worktreePath, "config", "-f", ".gitmodules",
+		"--get-regexp", `^submodule\..*\.path$`)
 	if err != nil {
-		return nil // no submodules or error listing them
+		// No submodules registered, or .gitmodules is malformed. Either way,
+		// nothing to do.
+		log.WarningLog.Printf("submodule enumeration via git config failed: %v", err)
+		return nil, nil
 	}
 
-	submodules := strings.Split(strings.TrimSpace(output), "\n")
-	for _, sm := range submodules {
-		sm = strings.TrimSpace(sm)
-		if sm == "" {
+	var failures []SubmoduleSetupResult
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
 			continue
 		}
-		smPath := filepath.Join(g.worktreePath, sm)
-
-		// Fetch latest from origin
-		if _, err := g.runGitCommand(smPath, "fetch", "origin"); err != nil {
-			log.WarningLog.Printf("submodule %s: fetch failed: %v", sm, err)
+		// Each line is of the form: "submodule.<name>.path <path>"
+		parts := strings.SplitN(line, " ", 2)
+		if len(parts) != 2 {
 			continue
 		}
-
-		// Try origin/main first, fall back to origin/master
-		if _, err := g.runGitCommand(smPath, "checkout", "origin/main"); err != nil {
-			if _, err := g.runGitCommand(smPath, "checkout", "origin/master"); err != nil {
-				log.WarningLog.Printf("submodule %s: checkout origin/main or origin/master failed: %v", sm, err)
-			}
+		smRel := strings.TrimSpace(parts[1])
+		if smRel == "" {
+			continue
+		}
+		res, ok := g.initFetchAndVerifyOne(smRel)
+		if !ok {
+			log.WarningLog.Printf("submodule %s: %s failed: %v", res.Name, res.Stage, res.Err)
+			failures = append(failures, res)
 		}
 	}
-
-	return nil
+	return failures, nil
 }
 
 // Cleanup removes the worktree and associated branch

@@ -85,3 +85,15 @@ func (s *stubFailingInitExecutor) Run(dir, name string, args ...string) ([]byte,
 	}
 	return []byte{}, nil
 }
+
+func TestInitAndFetchSubmodules_NoGitmodulesReturnsNil(t *testing.T) {
+	wt := t.TempDir()
+	gw := &GitWorktree{worktreePath: wt}
+	results, err := gw.initAndFetchSubmodules()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if results != nil {
+		t.Errorf("expected nil results when .gitmodules missing, got %+v", results)
+	}
+}
