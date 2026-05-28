@@ -130,6 +130,10 @@ export function ResumeSession(arg1) {
   return window['go']['app']['SessionAPI']['ResumeSession'](arg1);
 }
 
+export function RetrySubmoduleSetup(arg1, arg2) {
+  return window['go']['app']['SessionAPI']['RetrySubmoduleSetup'](arg1, arg2);
+}
+
 export function SearchBranches(arg1, arg2) {
   return window['go']['app']['SessionAPI']['SearchBranches'](arg1, arg2);
 }

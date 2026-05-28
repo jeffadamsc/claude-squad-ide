@@ -67,6 +67,8 @@ export function RenamePath(arg1:string,arg2:string,arg3:string):Promise<void>;
 
 export function ResumeSession(arg1:string):Promise<void>;
 
+export function RetrySubmoduleSetup(arg1:string,arg2:Array<string>):Promise<void>;
+
 export function SearchBranches(arg1:string,arg2:string):Promise<Array<string>>;
 
 export function SearchRemoteBranches(arg1:string,arg2:string,arg3:string):Promise<Array<string>>;
