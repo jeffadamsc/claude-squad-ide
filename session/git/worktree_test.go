@@ -52,7 +52,7 @@ func TestSetupNewWorktreeFromHEAD(t *testing.T) {
 		branchName:   "cs-test-session",
 	}
 
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
 	defer gw.Cleanup()
@@ -98,7 +98,7 @@ func TestSetupFromExistingBranch(t *testing.T) {
 		isExistingBranch: true,
 	}
 
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
 	defer gw.Cleanup()
@@ -142,7 +142,7 @@ func TestSetupFromRef(t *testing.T) {
 		baseRef:      firstCommit, // base off the first commit, not HEAD
 	}
 
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
 	defer gw.Cleanup()
@@ -209,7 +209,7 @@ func TestSetupFromRefWithOriginBranch(t *testing.T) {
 		baseRef:      baseRef,
 	}
 
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
 	defer gw.Cleanup()
@@ -242,7 +242,7 @@ func TestSetupFromRefCurrentBranch(t *testing.T) {
 		baseRef:      currentBranch, // use the currently checked-out branch as ref
 	}
 
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatalf("Setup() with current branch as ref should succeed, got: %v", err)
 	}
 	defer gw.Cleanup()
@@ -277,7 +277,7 @@ func TestCleanupRemovesWorktreeAndBranch(t *testing.T) {
 		branchName:   "cs-test-cleanup",
 	}
 
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
 
@@ -317,7 +317,7 @@ func TestCleanupPreservesExistingBranch(t *testing.T) {
 		isExistingBranch: true,
 	}
 
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
 

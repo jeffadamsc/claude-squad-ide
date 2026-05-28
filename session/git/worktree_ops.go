@@ -19,19 +19,20 @@ const (
 	submoduleFetchAttempts = 2
 )
 
-// Setup creates a new worktree for the session
-func (g *GitWorktree) Setup() error {
+// Setup creates a new worktree for the session and initializes submodules.
+// Returns SetupResult.SubmoduleFailures listing any submodules that failed.
+func (g *GitWorktree) Setup() (SetupResult, error) {
 	// Ensure worktrees parent directory exists.
 	// The worktreePath was already resolved (local or remote) by the constructor.
 	worktreesDir := filepath.Dir(g.worktreePath)
 	exec := g.getExecutor()
 	if _, isRemote := exec.(*RemoteExecutor); isRemote {
 		if _, err := exec.Run("", "mkdir", "-p", worktreesDir); err != nil {
-			return fmt.Errorf("failed to create remote worktree directory: %w", err)
+			return SetupResult{}, fmt.Errorf("failed to create remote worktree directory: %w", err)
 		}
 	} else {
 		if err := os.MkdirAll(worktreesDir, 0755); err != nil {
-			return err
+			return SetupResult{}, err
 		}
 	}
 
@@ -55,7 +56,7 @@ func (g *GitWorktree) Setup() error {
 }
 
 // setupFromExistingBranch creates a worktree from an existing branch
-func (g *GitWorktree) setupFromExistingBranch() error {
+func (g *GitWorktree) setupFromExistingBranch() (SetupResult, error) {
 	// Directory already created in Setup(), skip duplicate creation
 
 	// Clean up any existing worktree first
@@ -67,27 +68,25 @@ func (g *GitWorktree) setupFromExistingBranch() error {
 		// Local branch doesn't exist — check if remote tracking branch exists
 		_, remoteErr := g.runGitCommand(g.repoPath, "show-ref", "--verify", fmt.Sprintf("refs/remotes/origin/%s", g.branchName))
 		if remoteErr != nil {
-			return fmt.Errorf("branch %s not found locally or on remote", g.branchName)
+			return SetupResult{}, fmt.Errorf("branch %s not found locally or on remote", g.branchName)
 		}
 		// Create a local tracking branch via worktree add -b
 		if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, fmt.Sprintf("origin/%s", g.branchName)); err != nil {
-			return fmt.Errorf("failed to create worktree from remote branch %s: %w", g.branchName, err)
+			return SetupResult{}, fmt.Errorf("failed to create worktree from remote branch %s: %w", g.branchName, err)
 		}
-		_, initErr := g.initAndFetchSubmodules()
-		return initErr
+		return g.runSubmoduleInit()
 	}
 
 	// Create a new worktree from the existing local branch
 	if _, err := g.runGitCommand(g.repoPath, "worktree", "add", g.worktreePath, g.branchName); err != nil {
-		return fmt.Errorf("failed to create worktree from branch %s: %w", g.branchName, err)
+		return SetupResult{}, fmt.Errorf("failed to create worktree from branch %s: %w", g.branchName, err)
 	}
 
-	_, initErr := g.initAndFetchSubmodules()
-	return initErr
+	return g.runSubmoduleInit()
 }
 
 // setupNewWorktree creates a new worktree from HEAD
-func (g *GitWorktree) setupNewWorktree() error {
+func (g *GitWorktree) setupNewWorktree() (SetupResult, error) {
 	// Clean up any existing worktree first
 	_, _ = g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath) // Ignore error if worktree doesn't exist
 
@@ -99,9 +98,9 @@ func (g *GitWorktree) setupNewWorktree() error {
 		if strings.Contains(err.Error(), "fatal: ambiguous argument 'HEAD'") ||
 			strings.Contains(err.Error(), "fatal: not a valid object name") ||
 			strings.Contains(err.Error(), "fatal: HEAD: not a valid object name") {
-			return fmt.Errorf("this appears to be a brand new repository: please create an initial commit before creating an instance")
+			return SetupResult{}, fmt.Errorf("this appears to be a brand new repository: please create an initial commit before creating an instance")
 		}
-		return fmt.Errorf("failed to get HEAD commit hash: %w", err)
+		return SetupResult{}, fmt.Errorf("failed to get HEAD commit hash: %w", err)
 	}
 	headCommit := strings.TrimSpace(string(output))
 	g.baseCommitSHA = headCommit
@@ -111,15 +110,14 @@ func (g *GitWorktree) setupNewWorktree() error {
 	// This way, we can start the worktree with a clean slate.
 	// TODO: we might want to give an option to use main/master instead of the current branch.
 	if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, headCommit); err != nil {
-		return fmt.Errorf("failed to create worktree from commit %s: %w", headCommit, err)
+		return SetupResult{}, fmt.Errorf("failed to create worktree from commit %s: %w", headCommit, err)
 	}
 
-	_, err = g.initAndFetchSubmodules()
-	return err
+	return g.runSubmoduleInit()
 }
 
 // setupFromRef creates a new worktree with a new branch based on a specific ref.
-func (g *GitWorktree) setupFromRef() error {
+func (g *GitWorktree) setupFromRef() (SetupResult, error) {
 	// Clean up any existing worktree first
 	_, _ = g.runGitCommand(g.repoPath, "worktree", "remove", "-f", g.worktreePath)
 
@@ -129,17 +127,27 @@ func (g *GitWorktree) setupFromRef() error {
 	// Resolve the ref to a commit SHA for baseCommitSHA
 	output, err := g.runGitCommand(g.repoPath, "rev-parse", g.baseRef)
 	if err != nil {
-		return fmt.Errorf("failed to resolve ref %s: %w", g.baseRef, err)
+		return SetupResult{}, fmt.Errorf("failed to resolve ref %s: %w", g.baseRef, err)
 	}
 	g.baseCommitSHA = strings.TrimSpace(output)
 
 	// Create worktree with new branch based on the ref
 	if _, err := g.runGitCommand(g.repoPath, "worktree", "add", "-b", g.branchName, g.worktreePath, g.baseRef); err != nil {
-		return fmt.Errorf("failed to create worktree from ref %s: %w", g.baseRef, err)
+		return SetupResult{}, fmt.Errorf("failed to create worktree from ref %s: %w", g.baseRef, err)
 	}
 
-	_, err = g.initAndFetchSubmodules()
-	return err
+	return g.runSubmoduleInit()
+}
+
+// runSubmoduleInit calls initAndFetchSubmodules and wraps the result in SetupResult.
+// A hard error (e.g. enumeration failure) is returned as the error return; per-submodule
+// failures are surfaced in SetupResult.SubmoduleFailures.
+func (g *GitWorktree) runSubmoduleInit() (SetupResult, error) {
+	failures, err := g.initAndFetchSubmodules()
+	if err != nil {
+		return SetupResult{}, err
+	}
+	return SetupResult{SubmoduleFailures: failures}, nil
 }
 
 // initAndFetchSubmodules initializes each submodule in the worktree with

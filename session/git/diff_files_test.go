@@ -25,7 +25,7 @@ func TestGetDiffFiles_ModifiedFile(t *testing.T) {
 		baseCommitSHA: baseCommit,
 		executor:      defaultExecutor,
 	}
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -71,7 +71,7 @@ func TestGetDiffFiles_AddedFile(t *testing.T) {
 		baseCommitSHA: baseCommit,
 		executor:      defaultExecutor,
 	}
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -117,7 +117,7 @@ func TestGetDiffFiles_DeletedFile(t *testing.T) {
 		baseCommitSHA: baseCommit,
 		executor:      defaultExecutor,
 	}
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatal(err)
 	}
 
@@ -156,7 +156,7 @@ func TestGetDiffFiles_NoChanges(t *testing.T) {
 		baseCommitSHA: baseCommit,
 		executor:      defaultExecutor,
 	}
-	if err := gw.Setup(); err != nil {
+	if _, err := gw.Setup(); err != nil {
 		t.Fatal(err)
 	}
 

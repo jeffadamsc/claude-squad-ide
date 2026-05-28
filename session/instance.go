@@ -470,11 +470,13 @@ func (i *Instance) Start(firstTimeSetup bool) error {
 			// Worktree is already set up from storage; no need to re-setup.
 		} else {
 			log.InfoLog.Printf("Start(%s): running worktree Setup", i.Title)
-			if err := i.gitWorktree.Setup(); err != nil {
+			setupRes, err := i.gitWorktree.Setup()
+			if err != nil {
 				setupErr = fmt.Errorf("failed to setup git worktree: %w", err)
 				return setupErr
 			}
-			log.InfoLog.Printf("Start(%s): worktree Setup complete", i.Title)
+			i.setSubmoduleFailures(setupRes.SubmoduleFailures)
+			log.InfoLog.Printf("Start(%s): worktree Setup complete (%s)", i.Title, setupRes)
 		}
 		workDir = i.gitWorktree.GetWorktreePath()
 	} else {
@@ -748,10 +750,12 @@ func (i *Instance) Resume() error {
 	wtPath := i.gitWorktree.GetWorktreePath()
 	if !i.pathExists(wtPath) {
 		log.InfoLog.Printf("worktree %s not found, running Setup", wtPath)
-		if err := i.gitWorktree.Setup(); err != nil {
+		setupRes, err := i.gitWorktree.Setup()
+		if err != nil {
 			log.ErrorLog.Print(err)
 			return fmt.Errorf("failed to setup git worktree: %w", err)
 		}
+		i.setSubmoduleFailures(setupRes.SubmoduleFailures)
 	} else {
 		log.InfoLog.Printf("worktree %s already exists, skipping Setup", wtPath)
 	}
@@ -861,6 +865,12 @@ func (i *Instance) SendKeys(keys string) error {
 		return fmt.Errorf("cannot send keys to instance that has not been started or is paused")
 	}
 	return i.processManager.Write(i.processID, []byte(keys))
+}
+
+// setSubmoduleFailures is filled in by Task 5; this stub exists so Task 4 can
+// land without a compile break. Currently a no-op.
+func (i *Instance) setSubmoduleFailures(failures []git.SubmoduleSetupResult) {
+	_ = failures
 }
 
 // claudeSessionFile represents the JSON structure of ~/.claude/sessions/<PID>.json
