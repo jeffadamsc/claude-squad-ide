@@ -10,11 +10,20 @@ import { useHotkeys } from "./hooks/useHotkeys";
 import { useSessionStore } from "./store/sessionStore";
 import { api } from "./lib/wails";
 import type { AppConfig, CreateOptions } from "./lib/wails";
+import { EventsOn } from "../wailsjs/runtime/runtime";
+import {
+  SubmoduleWarningsDialog,
+  SubmoduleWarningsPayload,
+} from "./components/Dialogs/SubmoduleWarningsDialog";
+import { RetrySubmoduleSetup } from "../wailsjs/go/app/SessionAPI";
 
 export default function App() {
   const [wsPort, setWsPort] = useState(0);
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [showNewSession, setShowNewSession] = useState(false);
+  const [submoduleWarnings, setSubmoduleWarnings] =
+    useState<SubmoduleWarningsPayload | null>(null);
+  const [submoduleRetrying, setSubmoduleRetrying] = useState(false);
   const sidebarVisible = useSessionStore((s) => s.sidebarVisible);
   const scopeMode = useSessionStore((s) => s.scopeMode);
   const setSessions = useSessionStore((s) => s.setSessions);
@@ -40,6 +49,22 @@ export default function App() {
     };
     init();
   }, [setSessions]);
+
+  useEffect(() => {
+    const unlisten = EventsOn(
+      "session:submodule-warnings",
+      (payload: SubmoduleWarningsPayload) => {
+        if (!payload || payload.failures.length === 0) {
+          setSubmoduleWarnings(null);
+          setSubmoduleRetrying(false);
+        } else {
+          setSubmoduleWarnings(payload);
+          setSubmoduleRetrying(false);
+        }
+      },
+    );
+    return () => unlisten();
+  }, []);
 
   useSessionPoller(500);
 
@@ -103,6 +128,39 @@ export default function App() {
           onCancel={() => setShowNewSession(false)}
           profiles={config.Profiles}
           defaultWorkDir={config.DefaultWorkDir}
+        />
+      )}
+
+      {submoduleWarnings && (
+        <SubmoduleWarningsDialog
+          payload={submoduleWarnings}
+          retrying={submoduleRetrying}
+          onRetry={async (names) => {
+            setSubmoduleRetrying(true);
+            try {
+              await RetrySubmoduleSetup(submoduleWarnings.sessionId, names);
+              // The follow-up event will update state. If the event never arrives
+              // (e.g., backend error), the spinner stays — that's acceptable for v1.
+            } catch (e) {
+              console.error("RetrySubmoduleSetup failed:", e);
+              setSubmoduleRetrying(false);
+            }
+          }}
+          onOpenTerminal={() => {
+            // Navigate to the session's tab if one exists, otherwise just close.
+            // We look up the tab by sessionId in the store and activate it.
+            if (submoduleWarnings) {
+              const { tabs, setActiveTab } = useSessionStore.getState();
+              const tab = tabs.find(
+                (t) => t.sessionId === submoduleWarnings.sessionId,
+              );
+              if (tab) {
+                setActiveTab(tab.id);
+              }
+            }
+            setSubmoduleWarnings(null);
+          }}
+          onDismiss={() => setSubmoduleWarnings(null)}
         />
       )}
     </div>
