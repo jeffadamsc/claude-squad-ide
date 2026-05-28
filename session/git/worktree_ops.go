@@ -7,6 +7,16 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
+)
+
+const (
+	// submoduleInitTimeout bounds a single `git submodule update --init -- <name>` call.
+	submoduleInitTimeout = 2 * time.Minute
+	// submoduleFetchTimeout bounds a single `git fetch origin` inside one submodule.
+	submoduleFetchTimeout = 60 * time.Second
+	// submoduleFetchAttempts is the total number of fetch attempts (so 1 = no retry).
+	submoduleFetchAttempts = 2
 )
 
 // Setup creates a new worktree for the session
@@ -311,4 +321,79 @@ func CleanupWorktrees() error {
 	}
 
 	return nil
+}
+
+// initFetchAndVerifyOne runs init + fetch + checkout + verify for a single submodule.
+// Returns (result, true) on success; result.Err is nil in that case.
+// Returns (result-with-error, false) on any failure; the first failed stage is recorded.
+//
+// Timeouts: fetch is bounded by submoduleFetchTimeout × submoduleFetchAttempts.
+func (g *GitWorktree) initFetchAndVerifyOne(submoduleRel string) (SubmoduleSetupResult, bool) {
+	smPath := filepath.Join(g.worktreePath, submoduleRel)
+	result := SubmoduleSetupResult{Name: submoduleRel}
+
+	// Stage 1: init this specific submodule. We use the per-submodule form
+	// of "submodule update --init" so failures are scoped to this name.
+	if _, err := g.runCommandWithTimeout(
+		g.worktreePath,
+		submoduleInitTimeout,
+		1, // no retry on init — if it can't even init, retry won't help
+		"git", "submodule", "update", "--init", "--", submoduleRel,
+	); err != nil {
+		result.Stage = SubmoduleStageInit
+		result.Err = err
+		return result, false
+	}
+
+	// Stage 2: fetch origin with retry.
+	if _, err := g.runCommandWithTimeout(
+		smPath,
+		submoduleFetchTimeout,
+		submoduleFetchAttempts,
+		"git", "fetch", "origin",
+	); err != nil {
+		result.Stage = SubmoduleStageFetch
+		result.Err = err
+		return result, false
+	}
+
+	// Stage 2b: checkout origin/main, fall back to origin/master. No timeout (local op).
+	if _, err := g.runGitCommand(smPath, "checkout", "origin/main"); err != nil {
+		if _, err2 := g.runGitCommand(smPath, "checkout", "origin/master"); err2 != nil {
+			// Group checkout failure under "fetch" stage for UX simplicity.
+			result.Stage = SubmoduleStageFetch
+			result.Err = fmt.Errorf("checkout origin/main or origin/master: %w", err2)
+			return result, false
+		}
+	}
+
+	// Stage 3: verify the working directory is non-empty. This catches the
+	// 2026-05-28 secondary bug where fetch claimed success but the working
+	// tree was never populated.
+	if empty, err := isSubmoduleDirEmpty(smPath); err != nil {
+		result.Stage = SubmoduleStageVerify
+		result.Err = fmt.Errorf("verify directory: %w", err)
+		return result, false
+	} else if empty {
+		result.Stage = SubmoduleStageVerify
+		result.Err = fmt.Errorf("submodule directory %s is empty after init+fetch+checkout", submoduleRel)
+		return result, false
+	}
+
+	return result, true
+}
+
+// isSubmoduleDirEmpty returns true if the directory has no non-`.git` entries.
+func isSubmoduleDirEmpty(dir string) (bool, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false, err
+	}
+	for _, e := range entries {
+		if e.Name() == ".git" {
+			continue
+		}
+		return false, nil
+	}
+	return true, nil
 }

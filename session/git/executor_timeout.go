@@ -31,9 +31,17 @@ func (g *GitWorktree) runCommandWithTimeout(
 	name string,
 	args ...string,
 ) (string, error) {
-	if _, isRemote := g.getExecutor().(*RemoteExecutor); isRemote {
+	exec := g.getExecutor()
+	switch exec.(type) {
+	case *RemoteExecutor:
 		// Fall through to remote: no timeout protection in v1.
-		out, err := g.getExecutor().Run(path, name, args...)
+		out, err := exec.Run(path, name, args...)
+		return string(out), err
+	case *LocalExecutor:
+		// Use direct os/exec with process-group kill support (the normal path).
+	default:
+		// Unknown executor (e.g., test stubs) — delegate without timeout.
+		out, err := exec.Run(path, name, args...)
 		return string(out), err
 	}
 	if attempts < 1 {
