@@ -358,12 +358,7 @@ func (g *GitWorktree) initFetchAndVerifyOne(submoduleRel string) (SubmoduleSetup
 
 	// Stage 1: init this specific submodule. We use the per-submodule form
 	// of "submodule update --init" so failures are scoped to this name.
-	if _, err := g.runCommandWithTimeout(
-		g.worktreePath,
-		submoduleInitTimeout,
-		1, // no retry on init — if it can't even init, retry won't help
-		"git", "submodule", "update", "--init", "--", submoduleRel,
-	); err != nil {
+	if err := g.initSubmodule(submoduleRel); err != nil {
 		result.Stage = SubmoduleStageInit
 		result.Err = err
 		return result, false
@@ -381,14 +376,17 @@ func (g *GitWorktree) initFetchAndVerifyOne(submoduleRel string) (SubmoduleSetup
 		return result, false
 	}
 
-	// Stage 2b: checkout origin/main, fall back to origin/master. No timeout (local op).
-	if _, err := g.runGitCommand(smPath, "checkout", "origin/main"); err != nil {
-		if _, err2 := g.runGitCommand(smPath, "checkout", "origin/master"); err2 != nil {
-			// Group checkout failure under "fetch" stage for UX simplicity.
-			result.Stage = SubmoduleStageFetch
-			result.Err = fmt.Errorf("checkout origin/main or origin/master: %w", err2)
-			return result, false
-		}
+	// Stage 2b: checkout the submodule's default branch. We resolve it from the
+	// remote's HEAD (refs/remotes/origin/HEAD) rather than hardcoding origin/main,
+	// because submodules differ — e.g. verve-portal defaults to "develop".
+	// GetDefaultBranchWithExecutor falls back to main/master if HEAD is unset.
+	// No timeout (local op).
+	defaultBranch := GetDefaultBranchWithExecutor(smPath, g.getExecutor())
+	if _, err := g.runGitCommand(smPath, "checkout", "origin/"+defaultBranch); err != nil {
+		// Group checkout failure under "fetch" stage for UX simplicity.
+		result.Stage = SubmoduleStageFetch
+		result.Err = fmt.Errorf("checkout origin/%s: %w", defaultBranch, err)
+		return result, false
 	}
 
 	// Stage 3: verify the working directory is non-empty. This catches the
@@ -405,6 +403,61 @@ func (g *GitWorktree) initFetchAndVerifyOne(submoduleRel string) (SubmoduleSetup
 	}
 
 	return result, true
+}
+
+// initSubmodule runs `git submodule update --init` for one submodule.
+//
+// A worktree gets its own submodule repos under .git/worktrees/<wt>/modules,
+// so without a reference every session re-clones every submodule over the
+// network. When the source repo already has a copy, clone from it with
+// --reference and copy the objects in with --dissociate, so a later gc in the
+// source repo can't break this worktree. If the reference clone fails, clone
+// from the remote as before.
+func (g *GitWorktree) initSubmodule(submoduleRel string) error {
+	if ref := g.localSubmoduleReference(submoduleRel); ref != "" {
+		_, err := g.runCommandWithTimeout(
+			g.worktreePath,
+			submoduleInitTimeout,
+			1,
+			"git", "submodule", "update", "--init", "--reference", ref, "--dissociate", "--", submoduleRel,
+		)
+		if err == nil {
+			return nil
+		}
+		log.WarningLog.Printf("submodule %s: init with reference %s failed, cloning from remote: %v", submoduleRel, ref, err)
+	}
+	_, err := g.runCommandWithTimeout(
+		g.worktreePath,
+		submoduleInitTimeout,
+		1, // no retry on init — if it can't even init, retry won't help
+		"git", "submodule", "update", "--init", "--", submoduleRel,
+	)
+	return err
+}
+
+// localSubmoduleReference returns the git directory of an existing copy of the
+// submodule in the source repo (g.repoPath), or "" if there isn't one. It
+// checks the superproject's modules/<path> directory first, then a standalone
+// clone at <repoPath>/<path>/.git. Submodule names in .gitmodules are assumed
+// to match their paths, which is git's default.
+func (g *GitWorktree) localSubmoduleReference(submoduleRel string) string {
+	if g.repoPath == "" {
+		return ""
+	}
+	exec := g.getExecutor()
+	var candidates []string
+	if out, err := g.runGitCommand(g.repoPath, "rev-parse", "--path-format=absolute", "--git-common-dir"); err == nil {
+		if commonDir := strings.TrimSpace(out); commonDir != "" {
+			candidates = append(candidates, filepath.Join(commonDir, "modules", submoduleRel))
+		}
+	}
+	candidates = append(candidates, filepath.Join(g.repoPath, submoduleRel, ".git"))
+	for _, c := range candidates {
+		if _, err := exec.Run("", "test", "-d", filepath.Join(c, "objects")); err == nil {
+			return c
+		}
+	}
+	return ""
 }
 
 // isSubmoduleDirEmpty returns true if the directory contains nothing other
